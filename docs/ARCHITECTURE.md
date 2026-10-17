@@ -125,12 +125,19 @@ Same code runs on real data (offline) and on simulated events (online, inside ev
 
 ### 4.4 `archetypes/` — discovering playing styles
 
-- Filter to players with ≥ N hands (start N=500, tune).
+- **Per table format.** Styles are discovered separately for heads-up (2 dealt), short-handed
+  (3–6) and full ring (7–10): the same solid player has VPIP ~75% heads-up and ~15% full ring, so
+  mixing formats would cluster by format instead of style. The profiling unit is a
+  (site, player, format) triple. Short-handed is the primary format for simulation.
+- Filter to (player, format) units with ≥ N hands (start N=500, tune); 20% of units are held out
+  by a deterministic hash for the classifier's real-data transfer test.
 - Transform stats (logit for frequencies, log for ratios), standardize.
 - Fit Gaussian Mixture Models for K = 3…14; pick K by BIC + stability (bootstrap agreement) +
   interpretability. We expect roughly 6–10 styles; the data decides, not us.
-- Output per style: name, centroid, covariance, population share, example players. Saved as
-  `archetypes/profiles/<version>.json` and treated as a versioned artifact.
+- Output per style: name, description, share, centroid and covariance (standardized logit
+  space), pooled and median stat rates, per-stat Beta parameters. Saved as
+  `profiles/styles-<version>.json` (committed; a versioned artifact) by
+  `uv run pokerbot styles fit`, as a tracked `cluster` run.
 
 Expected styles (hypotheses to confirm or reject, not hard-coded):
 
