@@ -103,6 +103,80 @@ def cmd_styles_report(args: argparse.Namespace) -> None:
     print(args.out)
 
 
+def cmd_bots_calibrate(args: argparse.Namespace) -> None:
+    from pathlib import Path
+
+    from pokerbot.opponents.job import run_calibration
+
+    out = run_calibration(
+        Path(args.profiles),
+        Path(args.stats),
+        Path(args.out or f"profiles/bots-{args.version}.json"),
+        args.version,
+        formats=tuple(args.format),
+        rounds=args.rounds,
+        iters=args.iters,
+        popsize=args.popsize,
+        hands=args.hands,
+        workers=args.workers,
+    )
+    print(out)
+
+
+def cmd_bots_validate(args: argparse.Namespace) -> None:
+    from pathlib import Path
+
+    from pokerbot.opponents.validate import validate
+    from pokerbot.track import Run
+
+    with Run.start(
+        f"bots-validate-{Path(args.bots).stem}", kind="eval", config=vars(args) | {"func": None},
+        data={"bots": Path(args.bots), "profiles": Path(args.profiles)},
+    ) as run:  # fmt: skip
+        report = validate(Path(args.bots), Path(args.profiles), args.format, workers=args.workers)
+        run.save_artifact("validation.json", report)
+        for name, r in report.items():
+            run.log_metrics(
+                {f"{name}/max_abs_center_z": r["max_abs_center_z"],
+                 f"{name}/within_spread": r["within_spread"]}, style=name,
+            )  # fmt: skip
+            worst = sorted(r["stats"].items(), key=lambda kv: -abs(kv[1]["center_z"]))[:3]
+            detail = ", ".join(f"{f} z={v['center_z']:+.2f}" for f, v in worst)
+            print(
+                f"{name:26s} {r['within_spread']}/{r['features']} stats within real spread; "
+                f"worst: {detail}"
+            )
+
+
+def cmd_bots_tune_spread(args: argparse.Namespace) -> None:
+    import json
+    from pathlib import Path
+
+    from pokerbot.opponents.validate import tune_scales
+    from pokerbot.track import Run
+
+    bots_path = Path(args.bots)
+    with Run.start(
+        f"bots-spread-{bots_path.stem}", kind="calibrate", config=vars(args) | {"func": None},
+        data={"bots": bots_path, "profiles": Path(args.profiles)},
+    ) as run:  # fmt: skip
+
+        def log(scale, name, r):
+            run.log_metric(f"{name}/median_spread_ratio", r["median_spread_ratio"], style=name,
+                           scale=scale)  # fmt: skip
+            print(f"scale {scale:.2f} {name:26s} spread ratio {r['median_spread_ratio']:.2f}")
+
+        scales = tune_scales(bots_path, Path(args.profiles), args.format, workers=args.workers,
+                             log=log)  # fmt: skip
+        doc = json.loads(bots_path.read_text(encoding="utf-8"))
+        for st in doc["formats"][args.format]["styles"]:
+            st["x_scale"] = scales[st["name"]]
+        doc["spread_run_id"] = run.dir.name
+        bots_path.write_text(json.dumps(doc, indent=1), encoding="utf-8")
+        run.save_artifact("scales.json", scales)
+        print({k: round(v, 3) for k, v in scales.items()})
+
+
 def cmd_runs_list(args: argparse.Namespace) -> None:
     from pokerbot.track import list_runs
 
@@ -190,6 +264,32 @@ def main(argv: list[str] | None = None) -> None:
     srep.add_argument("--out", default="docs/STYLES.md")
     srep.set_defaults(func=cmd_styles_report)
 
+    bots = sub.add_parser("bots", help="synthetic opponents").add_subparsers(required=True)
+    cal = bots.add_parser("calibrate", help="fit bot parameters to each style (CMA-ES)")
+    cal.add_argument("--profiles", default="profiles/styles-v1.json")
+    cal.add_argument("--stats", default="data/processed/player_stats.parquet")
+    cal.add_argument("--version", default="v1")
+    cal.add_argument("--out", default=None)
+    cal.add_argument("--format", action="append", default=None, help="sh, fr, hu (repeatable)")
+    cal.add_argument("--rounds", type=int, default=2)
+    cal.add_argument("--iters", type=int, default=30)
+    cal.add_argument("--popsize", type=int, default=14)
+    cal.add_argument("--hands", type=int, default=1000)
+    cal.add_argument("--workers", type=int, default=8)
+    cal.set_defaults(func=cmd_bots_calibrate)
+    val = bots.add_parser("validate", help="compare sampled bots with real players per style")
+    val.add_argument("--bots", default="profiles/bots-v1.json")
+    val.add_argument("--profiles", default="profiles/styles-v1.json")
+    val.add_argument("--format", default="sh")
+    val.add_argument("--workers", type=int, default=8)
+    val.set_defaults(func=cmd_bots_validate)
+    tune = bots.add_parser("tune-spread", help="measure per-style spread scales (writes x_scale)")
+    tune.add_argument("--bots", default="profiles/bots-v1.json")
+    tune.add_argument("--profiles", default="profiles/styles-v1.json")
+    tune.add_argument("--format", default="sh")
+    tune.add_argument("--workers", type=int, default=8)
+    tune.set_defaults(func=cmd_bots_tune_spread)
+
     runs = sub.add_parser("runs", help="tracked experiment runs").add_subparsers(required=True)
     runs.add_parser("list", help="all runs").set_defaults(func=cmd_runs_list)
     show = runs.add_parser("show", help="metadata, metrics summary and events of a run")
@@ -201,6 +301,8 @@ def main(argv: list[str] | None = None) -> None:
     plot.set_defaults(func=cmd_runs_plot)
 
     args = parser.parse_args(argv)
+    if getattr(args, "format", "unset") is None:  # calibrate: repeatable --format
+        args.format = ["sh"]
     args.func(args)
 
 
