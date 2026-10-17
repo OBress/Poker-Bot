@@ -72,8 +72,12 @@ any size; the engine maps to the nearest abstract size only for the baseline's l
 
 ### 4.1 `engine/` — game rules and table runner
 
-- Own lightweight NLHE engine optimized for simulation throughput (target ≥ 2k hands/sec/core with
-  simple bots; scale with `multiprocessing`).
+- Own lightweight NLHE engine optimized for simulation throughput (measured: ~3.5k hands/sec/core
+  6-max, ~7k heads-up with random bots; scale with `multiprocessing`).
+- Real-table showdown rules: the last river bettor shows first (else first live player left of the
+  button), later players muck hands that can't win, and every hand is tabled when someone is
+  all-in. Mucked cards never enter the event stream, so classifiers only learn from what a real
+  opponent would reveal.
 - Hand evaluation via a fast C-backed evaluator (`phevaluator` or equivalent).
 - [`pokerkit`](https://github.com/uoftcprg/pokerkit) used as a **reference oracle** in tests (our
   engine must agree with it on pot/side-pot/showdown results) and for parsing PHH files.
@@ -161,15 +165,18 @@ The baseline is **frozen** once chosen; experiments record its version hash.
 
 ### 4.7 `classifier/` — evolved program #1
 
-Contract (every candidate, hand-written or LLM-written, implements this):
+Full design of the editable-program format, inputs/outputs and anti-cheating guards:
+[EVOLUTION.md](EVOLUTION.md).
+
+Contract (simplified; every candidate, hand-written or LLM-written, implements this):
 
 ```python
 PARAMS: dict[str, float]          # numeric knobs exposed to the tuner
 
 class Classifier:
     def __init__(self, n_styles: int, profiles: StyleProfiles, params: dict[str, float]): ...
-    def observe(self, event: Event) -> None: ...          # streaming, called for every event
-    def posterior(self, seat: int) -> np.ndarray: ...     # shape (n_styles,), sums to 1
+    def observe(self, event: Event) -> None: ...          # streaming, public events only
+    def posterior(self, seat: int, feats: SeatFeatures) -> np.ndarray: ...  # (n_styles,), sums to 1
 ```
 
 Seed implementation: Bayesian update of per-seat stat counts with Beta priors, Gaussian likelihood
@@ -192,7 +199,7 @@ PARAMS: dict[str, float]
 
 class Exploiter:
     def __init__(self, baseline: Policy, profiles: StyleProfiles, params: dict[str, float]): ...
-    def act(self, state: DecisionState, beliefs: dict[int, np.ndarray], stats: SeatStats) -> Action: ...
+    def policy(self, state, beliefs, feats, baseline: ActionDist) -> ActionDist: ...  # harness samples
 ```
 
 - Start from the baseline's action distribution at this decision.

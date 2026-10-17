@@ -6,8 +6,9 @@ Guidance for AI coding agents (Claude Code, Codex, etc.) and humans working in t
 
 A research codebase testing whether a style-classifying, exploiting poker agent beats an equilibrium
 (GTO-style) baseline against exploitable opponents. Read [README.md](README.md), then
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/ROADMAP.md](docs/ROADMAP.md) before changing
-anything structural. Work phase by phase; check the current phase's exit criteria.
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/ROADMAP.md](docs/ROADMAP.md) and
+[docs/EVOLUTION.md](docs/EVOLUTION.md) before changing anything structural. Work phase by phase;
+check the current phase's exit criteria.
 
 ## Non-negotiable rules
 
@@ -49,7 +50,7 @@ When changing an interface, update the seed programs, the sandbox allow-list, th
   changes there.
 - Configs in `configs/*.yaml`; no magic constants buried in code for anything experiment-related.
 
-## Commands (once Phase 0 lands)
+## Commands
 
 ```bash
 uv sync
@@ -63,9 +64,21 @@ uv run pytest
 uv run ruff check . && uv run ruff format --check .
 ```
 
+```bash
+uv run pokerbot bench
+```
+
+```bash
+uv run pokerbot llm ping
+```
+
 ## Testing expectations
 
-- Engine changes: run the pokerkit cross-check tests (payouts, side pots, showdowns).
+- Engine changes: run the pokerkit cross-check tests (payouts, side pots, showdowns) and
+  `tests/test_engine_rules.py`. Engine rules are documented at the top of `engine/state.py`;
+  pokerkit asks for some no-op checks our engine skips (see the test harness), nothing else differs.
+- Information hiding is a correctness property: anything a policy or observer receives must be
+  public or its own. Add a test whenever you add a new event or field.
 - Stats changes: unit tests on hand-built histories with known answers.
 - Evolve changes: test the sandbox rejects disallowed imports, infinite loops and crashes.
 - Don't hit the real Luminal API in unit tests; use the cached/mocked client.

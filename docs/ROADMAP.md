@@ -3,7 +3,11 @@
 Each phase ends with a concrete, checkable deliverable. Don't start a phase until the previous one's
 exit criteria pass. See [ARCHITECTURE.md](ARCHITECTURE.md) for the design behind each piece.
 
-## Phase 0 — Foundations
+## Phase 0 — Foundations ✅
+
+Done: engine matches pokerkit on 10,000 random 2–6 player hands (payouts, side pots, odd chips);
+rule tests for showdown order, mucks, short all-ins, min-raises and information hiding;
+~3.5k hands/sec/core 6-max; `pokerbot llm ping` answers via Luminal.
 
 - Repo scaffolding: `pyproject.toml` (uv), `src/pokerbot/` package, ruff, pytest, CI-able `make`/scripts.
 - `llm/` client for Luminal with retries, caching, cost logging; smoke test that DeepSeek answers.

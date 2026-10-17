@@ -36,10 +36,12 @@ that play and classify are plain Python + NumPy.
 
 ## Status
 
-Planning. See [docs/ROADMAP.md](docs/ROADMAP.md) for phases and exit criteria, and
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design.
+Phase 0 done (engine, LLM client). Next: Phase 1, real hand-history data.
+See [docs/ROADMAP.md](docs/ROADMAP.md) for phases and exit criteria,
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design, and
+[docs/EVOLUTION.md](docs/EVOLUTION.md) for how the LLM edits the algorithms.
 
-## Setup (planned)
+## Setup
 
 Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
 
@@ -51,7 +53,13 @@ uv sync
 cp .env.example .env
 ```
 
-Then put your Luminal key in `.env`. The LLM endpoint is OpenAI-compatible:
+Then put your Luminal key in `.env` and check it works:
+
+```bash
+uv run pokerbot llm ping
+```
+
+The LLM endpoint is OpenAI-compatible:
 
 | Setting | Value |
 |---|---|
