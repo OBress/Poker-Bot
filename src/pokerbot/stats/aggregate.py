@@ -1,7 +1,7 @@
 """Compute per-player stat counts over the whole real dataset, in parallel.
 
 Work is split into chunks of rows; each worker replays its hands in pokerkit, counts stats per hand,
-and sums them per player. Chunk results are written as long-format Parquet
+and sums them per (player, table format). Chunk results are written as long-format Parquet
 (``pid, stat, n, x``) and then summed into one table.
 """
 
@@ -32,6 +32,15 @@ class ChunkResult:
     skipped: int
 
 
+def table_format(players_dealt: int) -> str:
+    """Game format of a hand: heads-up, short-handed (3-6) or full ring (7-10). Styles are only
+    comparable within a format (a solid player's VPIP is ~75% heads-up, ~15% full ring), so each
+    (player, format) pair is profiled separately: pid = "<site>:<name>:<format>"."""
+    if players_dealt == 2:
+        return "hu"
+    return "sh" if players_dealt <= 6 else "fr"
+
+
 def standard_blinds(row: dict) -> bool:
     """Seat 0 posted the small blind and seat 1 a larger big blind. Otherwise (missing small
     blind, reversed posts; ~0.3% of HandHQ) positions are ambiguous and the hand is skipped."""
@@ -60,9 +69,10 @@ def _process_chunk(src: Path, offset: int, length: int, out: Path) -> ChunkResul
                     continue
                 hands += 1
                 pending += 1
-                site = row["site"]
+                prefix = row["site"]
+                suffix = table_format(len(hand.players))
                 for seat, counts in hand_counts(hand.events).items():
-                    pid = f"{site}:{hand.players[seat]}"
+                    pid = f"{prefix}:{hand.players[seat]}:{suffix}"
                     for stat, (n, x) in counts.items():
                         t = totals[(pid, stat)]
                         t[0] += n

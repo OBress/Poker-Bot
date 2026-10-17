@@ -26,9 +26,7 @@ from pokerbot.engine.events import (
     Event,
     HandEnd,
     HandStart,
-    Muck,
     PlayerAction,
-    Showdown,
 )
 
 Counts = dict[str, tuple[int, int]]
@@ -205,16 +203,19 @@ def hand_counts(events: Sequence[Event]) -> dict[int, Counts]:
             aggressor = street_raiser  # c-bet on the next street needs aggression on this one
 
     # ---- showdown
+    # A hand reaches showdown iff 2+ players never folded. This holds even when the source omits
+    # showdown records (iPoker all-ins), so it doesn't rely on Showdown/Muck events.
     end = next(e for e in events if isinstance(e, HandEnd))
-    at_showdown = {e.seat for e in events if isinstance(e, (Showdown, Muck))}
     all_folded = {a.seat for a in actions if a.type == ActionType.FOLD}
-    if end.showdown:
-        at_showdown |= {s for s in saw_flop if s not in all_folded}
+    in_hand = {e.seat for e in events if isinstance(e, BlindPosted)} | {a.seat for a in actions}
+    live = in_hand - all_folded
+    at_showdown = live if len(live) >= 2 else set()
     if flop_dealt:
         for s in saw_flop:
             acc.opp(s, "wtsd", s in at_showdown)
-    for s in at_showdown:
-        acc.opp(s, "wsd", end.payoffs[s] > 0)  # net winner of the hand
+    if end.payoffs_known:
+        for s in at_showdown:
+            acc.opp(s, "wsd", end.payoffs[s] > 0)  # net winner of the hand
     return dict(acc.counts)
 
 

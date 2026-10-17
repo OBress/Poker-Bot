@@ -74,6 +74,9 @@ class HandEnd:
     hand_id: int
     payoffs: tuple[int, ...]  # net chips won/lost per seat
     showdown: bool
+    # False for real hands whose result the source didn't record (e.g. iPoker showdowns with no
+    # revealed cards): payoffs are then not meaningful and outcome stats must skip the hand.
+    payoffs_known: bool = True
 
 
 Event = HandStart | BlindPosted | HoleCards | PlayerAction | BoardDealt | Showdown | Muck | HandEnd

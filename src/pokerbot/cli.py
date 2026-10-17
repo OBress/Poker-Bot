@@ -78,6 +78,22 @@ def cmd_data_stats(args: argparse.Namespace) -> None:
     print(f"{info['players']:,} players, {info['rows']:,} rows, {seconds:.0f}s")
 
 
+def cmd_styles_fit(args: argparse.Namespace) -> None:
+    from pathlib import Path
+
+    from pokerbot.archetypes.fit import fit_styles
+
+    out = fit_styles(
+        Path(args.stats),
+        Path(args.out or f"profiles/styles-{args.version}.json"),
+        args.version,
+        min_hands=args.min_hands,
+        ks=range(args.k_min, args.k_max + 1),
+        boots=args.boots,
+    )
+    print(out)
+
+
 def cmd_runs_list(args: argparse.Namespace) -> None:
     from pokerbot.track import list_runs
 
@@ -146,9 +162,20 @@ def main(argv: list[str] | None = None) -> None:
     stats = data.add_parser("stats", help="per-player stat counts over all real hands")
     stats.add_argument("--data", default=HANDHQ_OUT)
     stats.add_argument("--out", default="data/processed/player_stats.parquet")
-    stats.add_argument("--workers", type=int, default=6)
+    stats.add_argument("--workers", type=int, default=10)
     stats.add_argument("--limit-files", type=int, default=None)
     stats.set_defaults(func=cmd_data_stats)
+
+    styles = sub.add_parser("styles", help="discover playing styles").add_subparsers(required=True)
+    sfit = styles.add_parser("fit", help="cluster real players into styles, write profiles")
+    sfit.add_argument("--stats", default="data/processed/player_stats.parquet")
+    sfit.add_argument("--version", default="v1")
+    sfit.add_argument("--out", default=None)
+    sfit.add_argument("--min-hands", type=int, default=500)
+    sfit.add_argument("--k-min", type=int, default=3)
+    sfit.add_argument("--k-max", type=int, default=14)
+    sfit.add_argument("--boots", type=int, default=5)
+    sfit.set_defaults(func=cmd_styles_fit)
 
     runs = sub.add_parser("runs", help="tracked experiment runs").add_subparsers(required=True)
     runs.add_parser("list", help="all runs").set_defaults(func=cmd_runs_list)

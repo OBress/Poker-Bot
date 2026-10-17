@@ -21,6 +21,9 @@ order runs r = 3, 4, …, n−1, 0, 1, 2.
 |---|---|---|---|---|---|---|
 | Name | UTG (EP) | HJ (MP) | CO | BTN | SB | BB |
 
+**Formats.** Statistics are kept per table format, by players dealt: heads-up (2), short-handed
+(3–6), full ring (7–10). Styles are discovered and classified within one format.
+
 For tables with fewer players, positions are removed starting from the earliest (UTG first), so BTN,
 SB, BB and CO always exist when there are enough seats. Every stat in §2 can be split by position
 class P ∈ {EP, MP, CO, BTN, SB, BB}.

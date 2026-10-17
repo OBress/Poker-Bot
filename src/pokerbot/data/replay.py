@@ -149,9 +149,14 @@ def replay(row: dict, hand_id: int = 0) -> RealHand:
                         )
             prev_stacks, prev_bets = stacks, bets
         final = list(state.stacks)
+        finished = not state.status
 
+    # Contested to the end (2+ players never folded): the winner is only known if cards were shown.
+    contested = n - len(folded) >= 2
+    revealed = any(isinstance(e, Showdown) for e in events)
+    known = finished and (not contested or revealed)
     events.append(
-        HandEnd(hand_id, tuple(f - s for f, s in zip(final, start, strict=True)), showdown)
+        HandEnd(hand_id, tuple(f - s for f, s in zip(final, start, strict=True)), showdown, known)
     )
     return RealHand([str(p) for p in row["players"]], events)
 

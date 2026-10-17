@@ -249,3 +249,37 @@ def test_unknown_stacks_replay_without_depth_stats() -> None:
     c = hand_counts(hand.events)
     assert c[1]["pfr"] == (1, 1) and c[1]["pfr_BTN"] == (1, 1)
     assert not any(k.startswith(("vpip_d", "pfr_d")) for k in c[0] | c[1])
+
+
+def test_unrecorded_showdowns_count_for_wtsd_but_not_wsd() -> None:
+    base = {
+        "players": ["a", "b"],
+        "starting_stacks": [float("inf"), float("inf")],
+        "blinds": [1.0, 2.0],
+        "antes": [0.0, 0.0],
+        "min_bet": 2.0,
+        "big_blind": 2.0,
+    }
+    # iPoker style: both hands unrevealed at showdown, no winnings recorded.
+    hidden = replay(base | {"actions": [
+        "d dh p1 ????", "d dh p2 ????", "p2 cc", "p1 cc", "d db 2c7s8c", "p1 cc", "p2 cc",
+        "d db 3d", "p1 cc", "p2 cc", "d db Ks", "p1 cc", "p2 cc", "p1 sm ????", "p2 sm ????",
+    ]})  # fmt: skip
+    assert not hidden.events[-1].payoffs_known
+    c = hand_counts(hidden.events)
+    assert c[0]["wtsd"] == (1, 1) and c[1]["wtsd"] == (1, 1)
+    assert "wsd" not in c[0] and "wsd" not in c[1]
+    # All-in with no showdown records at all.
+    allin = replay(base | {"starting_stacks": [100.0, 100.0], "actions": [
+        "d dh p1 ????", "d dh p2 ????", "p2 cc", "p1 cc", "d db 2c7s8c", "p1 cbr 98", "p2 cc",
+        "d db 3d", "d db Ks",
+    ]})  # fmt: skip
+    c = hand_counts(allin.events)
+    assert c[0]["wtsd"] == (1, 1) and "wsd" not in c[0]
+    # A revealed winner keeps W$SD.
+    shown = replay(base | {"starting_stacks": [100.0, 100.0], "actions": [
+        "d dh p1 ????", "d dh p2 ????", "p2 cc", "p1 cc", "d db 2c7s8c", "p1 cc", "p2 cc",
+        "d db 3d", "p1 cc", "p2 cc", "d db Ks", "p1 cc", "p2 cc", "p1 sm AhAd", "p2 sm ????",
+    ]})  # fmt: skip
+    assert shown.events[-1].payoffs_known
+    assert hand_counts(shown.events)[0]["wsd"] == (1, 1)

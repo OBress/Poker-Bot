@@ -48,6 +48,14 @@ iPoker (all 6.0M IPN hands, 28%) has no recorded stack sizes (stored as infinity
 replayed with a placeholder stack of 10,000 bb (`UNKNOWN_STACK_BB`): actions, pots and payoffs stay
 exact, but stack-depth stat splits skip them and all-in flags are missing. iPoker files also show
 one player's hole cards on every hand (the recording account); we ignore dealt hole cards.
+iPoker also records no winnings and usually no revealed cards at showdown, and all-in hands have
+no showdown records at all. So for any hand contested to the end, the winner is only treated as
+known if some cards were revealed (`HandEnd.payoffs_known`); W$SD skips unknown outcomes. WTSD
+is computed from who never folded, so it doesn't depend on showdown records. A few PartyPoker
+high-stakes hands (up to ~5% of contested hands at 600NL) are affected the same way.
+
+Stats are keyed by (site, player, table format): heads-up (2 dealt), short-handed (3–6), full
+ring (7–10). Units with ≥ 500 hands: 20,274 short-handed, 11,557 full ring, 2,447 heads-up.
 
 Coverage report (players with enough hands, as days of data accumulate):
 
