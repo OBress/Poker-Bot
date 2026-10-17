@@ -63,9 +63,10 @@ def suggest_name(r: dict[str, float]) -> tuple[str, str]:
     agg = (r["agg_flop"] + r["agg_turn"] + r["agg_river"]) / 3
     looseness = "loose" if vpip >= 0.32 else "tight" if vpip <= 0.20 else "medium"
     style = "aggressive" if ratio >= 0.65 else "passive" if ratio <= 0.4 else "balanced"
+    early = f"opens {r['rfi_EP']:.0%} early vs " if "rfi_EP" in r else "opens "
     desc = (
         f"{looseness}, {style} preflop (VPIP {vpip:.0%}, PFR {pfr:.0%}); "
-        f"opens {r['rfi_EP']:.0%} early vs {r['rfi_BTN']:.0%} button; "
+        f"{early}{r['rfi_BTN']:.0%} button; limps {r['limp']:.0%}; "
         f"3-bets {r['3bet']:.0%}; postflop aggression {agg:.0%}; "
         f"folds to c-bet {r['fold_to_cbet_flop']:.0%}; WTSD {r['wtsd']:.0%}"
     )
@@ -148,7 +149,17 @@ def write_profiles(path: Path, version: str, run_id: str, formats: dict[str, dic
 
 
 def load_profiles(path: Path) -> dict:
-    doc = json.loads(Path(path).read_text(encoding="utf-8"))
+    """Load a profile file, applying reviewed names from ``<stem>.names.json`` if present (the
+    generated ``name`` is kept as ``suggested_name``)."""
+    path = Path(path)
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    names_path = path.with_name(path.stem + ".names.json")
+    names = json.loads(names_path.read_text(encoding="utf-8")) if names_path.exists() else {}
+    for fmt, f in doc["formats"].items():
+        for s in f["styles"]:
+            s["suggested_name"] = s["name"]
+            if str(s["index"]) in names.get(fmt, {}):
+                s["name"], s["description"] = names[fmt][str(s["index"])]
     for f in doc["formats"].values():
         f["transform"] = FeatureTransform.from_dict(f["transform"])
         for s in f["styles"]:

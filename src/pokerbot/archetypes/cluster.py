@@ -61,9 +61,11 @@ def select_k(z: np.ndarray, ks: range, seed: int, boots: int = 5, log=None) -> l
     return results
 
 
-def choose(results: list[KResult], min_ari: float = 0.8, min_share: float = 0.02) -> KResult:
-    """Lowest BIC among Ks that are stable and have no tiny components (MATH.md §3.3). Falls
-    back to the most stable K if none qualifies."""
+def choose(results: list[KResult], min_ari: float = 0.5, min_share: float = 0.02) -> KResult:
+    """Lowest BIC among Ks that are reasonably stable and have no tiny components (MATH.md §3.3).
+    Players form overlapping styles, not separated blobs, so hard-label agreement across bootstraps
+    falls with K even when the extra components are real; 0.5 rejects unstable splits without
+    forcing a too-coarse K. Falls back to the most stable K if none qualifies."""
     ok = [r for r in results if r.ari >= min_ari and r.min_share >= min_share]
     if ok:
         return min(ok, key=lambda r: r.bic)

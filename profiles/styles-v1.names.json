@@ -1,0 +1,27 @@
+{
+  "_comment": "Reviewed names for styles-v1.json (overrides the heuristic suggestions). Keys: format -> style index. Based on the pooled stats in docs/STYLES.md and the stack-depth check (short-stackers play most hands under 25bb).",
+  "sh": {
+    "0": ["Loose-aggressive fish", "Plays half its hands (VPIP 48%), limps 28% yet still raises 18%, and opens almost as wide from early position (18%) as the button (32%)."],
+    "1": ["Passive limper", "Limps into ~4 in 10 pots and almost never raises (PFR 4%); a classic recreational caller."],
+    "2": ["Loose-passive", "Plays a third of hands, mostly by limping or calling; raises rarely."],
+    "3": ["Position-blind aggressor", "Raises a lot but opens nearly as wide early as late (21% vs 36%): aggressive without positional discipline."],
+    "4": ["Semi-loose passive", "A bit too loose and still limps 13% of the time; middle of the pool."],
+    "5": ["TAG", "Solid regular: tight, raises first in, widens strongly on the button (16% early vs 40% button), 3-bets 7%."],
+    "6": ["Tight-solid (ABC)", "Tight and straightforward; slightly less aggressive than the TAG and folds to c-bets the most."],
+    "7": ["Short-stacker", "Push/fold short-stack strategy: 69% of hands under 25bb, raises nearly every hand it plays, 3-bets 10%, goes to showdown 43%."]
+  },
+  "fr": {
+    "0": ["Loose-passive", "Loosest full-ring group; limps often and raises little."],
+    "1": ["Passive limper", "Almost never raises (PFR 3%); limps a quarter of hands."],
+    "2": ["Weak-tight", "Plays few hands and mostly passively; folds to pressure."],
+    "3": ["TAG", "Tight-aggressive regular with real positional awareness (10% early vs 35% button)."],
+    "4": ["Nit", "Very tight and fairly passive preflop."],
+    "5": ["Short-stacker", "Push/fold short stack: 87% of hands under 25bb, VPIP equals PFR."]
+  },
+  "hu": {
+    "0": ["HU hyper-aggressor", "Opens 86% of buttons and 3-bets 19%: maximum pressure."],
+    "1": ["HU limper", "Limps the button 68% of the time instead of raising."],
+    "2": ["HU semi-passive", "Mixes limps (28%) and raises; plays many hands but without much pressure."],
+    "3": ["HU regular", "Standard heads-up regular: opens 66% of buttons, rarely limps, 3-bets 16%."]
+  }
+}

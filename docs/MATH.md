@@ -112,8 +112,9 @@ so Σ_k describes how real players in a style differ, not how noisy our measurem
 
 where N is the number of players. Pick the K with the lowest BIC, provided that
 
-- **stability:** fitting on bootstrap resamples of players gives a mean adjusted Rand index ≥ 0.8
-  against the full fit, and
+- **stability:** fitting on bootstrap resamples of players gives a mean adjusted Rand index ≥ 0.5
+  against the full fit (players form overlapping styles rather than separated groups, so
+  hard-label agreement drops with K even for real components; 0.8 forced K = 3 on real data), and
 - **readability:** every component has a clear description and a share π_k ≥ 2%.
 
 ### 3.4 Soft membership of a real player

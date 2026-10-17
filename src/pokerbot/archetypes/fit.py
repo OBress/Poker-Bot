@@ -41,6 +41,11 @@ def fit_styles(
         for fmt in FORMATS:
             sub = stats.filter(pl.col("pid").str.ends_with(f":{fmt}"))
             pids, hands, n, x = count_matrix(sub, FEATURES, min_hands)
+            # Drop features that barely exist in this format (e.g. no early position heads-up).
+            usable = np.median(n, axis=0) >= 10 if len(pids) else np.ones(len(FEATURES), bool)
+            features = tuple(f for f, u in zip(FEATURES, usable, strict=True) if u)
+            n, x = n[:, usable], x[:, usable]
+            run.log_params(**{f"{fmt}_features": list(features)})
             fit_mask = np.array([not is_holdout(p) for p in pids], dtype=bool)
             run.log_metrics(
                 {
@@ -53,7 +58,7 @@ def fit_styles(
             if fit_mask.sum() < 500:
                 run.event("format_skipped", format=fmt, players=int(fit_mask.sum()))
                 continue
-            transform = fit_transform(n[fit_mask], x[fit_mask])
+            transform = fit_transform(n[fit_mask], x[fit_mask], features)
             z, _ = transform.transform(n[fit_mask], x[fit_mask])
 
             def log(k, r, fmt=fmt):
@@ -72,7 +77,7 @@ def fit_styles(
 
             results = select_k(z, ks, seed, boots, log)
             best = choose(results)
-            styles = build_styles(best.model, z, n[fit_mask], x[fit_mask], FEATURES)
+            styles = build_styles(best.model, z, n[fit_mask], x[fit_mask], features)
             run.event("k_chosen", format=fmt, k=best.k, bic=best.bic, ari=best.ari)
             run.log_metric(f"{fmt}/chosen_k", best.k)
             formats[fmt] = {

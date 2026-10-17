@@ -94,6 +94,15 @@ def cmd_styles_fit(args: argparse.Namespace) -> None:
     print(out)
 
 
+def cmd_styles_report(args: argparse.Namespace) -> None:
+    from pathlib import Path
+
+    from pokerbot.archetypes.report import render
+
+    Path(args.out).write_text(render(Path(args.profiles)) + "\n", encoding="utf-8")
+    print(args.out)
+
+
 def cmd_runs_list(args: argparse.Namespace) -> None:
     from pokerbot.track import list_runs
 
@@ -176,6 +185,10 @@ def main(argv: list[str] | None = None) -> None:
     sfit.add_argument("--k-max", type=int, default=14)
     sfit.add_argument("--boots", type=int, default=5)
     sfit.set_defaults(func=cmd_styles_fit)
+    srep = styles.add_parser("report", help="write a markdown report of a profile file")
+    srep.add_argument("--profiles", default="profiles/styles-v1.json")
+    srep.add_argument("--out", default="docs/STYLES.md")
+    srep.set_defaults(func=cmd_styles_report)
 
     runs = sub.add_parser("runs", help="tracked experiment runs").add_subparsers(required=True)
     runs.add_parser("list", help="all runs").set_defaults(func=cmd_runs_list)

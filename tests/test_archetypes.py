@@ -61,3 +61,15 @@ def test_holdout_is_deterministic() -> None:
     a = [is_holdout(f"PS:p{i}:sh") for i in range(5000)]
     assert a == [is_holdout(f"PS:p{i}:sh") for i in range(5000)]
     assert 0.17 < np.mean(a) < 0.23
+
+
+def test_reviewed_names_override_suggestions(tmp_path: Path, monkeypatch) -> None:
+    import json
+
+    monkeypatch.chdir(tmp_path)
+    stats_path = tmp_path / "stats.parquet"
+    synthetic_stats(300).write_parquet(stats_path)
+    out = fit_styles(stats_path, tmp_path / "styles-x.json", "x", ks=range(3, 4), boots=1)
+    (tmp_path / "styles-x.names.json").write_text(json.dumps({"sh": {"0": ["Fish", "Loose."]}}))
+    s0 = load_profiles(out)["formats"]["sh"]["styles"][0]
+    assert s0["name"] == "Fish" and s0["description"] == "Loose." and s0["suggested_name"]

@@ -35,8 +35,10 @@ FEATURES: tuple[str, ...] = (
     "agg_turn",
     "agg_river",
     "wtsd",
-    "wsd",
 )
+# W$SD is deliberately excluded: it mostly reflects luck and skill rather than style, and it is
+# unknown for every iPoker player (no recorded showdown outcomes), which would create an artificial
+# cluster of players sitting exactly at the prior.
 
 
 @dataclass(frozen=True)
