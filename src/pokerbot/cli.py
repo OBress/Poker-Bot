@@ -119,6 +119,7 @@ def cmd_bots_calibrate(args: argparse.Namespace) -> None:
         popsize=args.popsize,
         hands=args.hands,
         workers=args.workers,
+        warm_start=Path(args.warm_start) if args.warm_start else None,
     )
     print(out)
 
@@ -276,6 +277,7 @@ def main(argv: list[str] | None = None) -> None:
     cal.add_argument("--popsize", type=int, default=14)
     cal.add_argument("--hands", type=int, default=1000)
     cal.add_argument("--workers", type=int, default=8)
+    cal.add_argument("--warm-start", default=None, help="earlier bots file to start from")
     cal.set_defaults(func=cmd_bots_calibrate)
     val = bots.add_parser("validate", help="compare sampled bots with real players per style")
     val.add_argument("--bots", default="profiles/bots-v1.json")

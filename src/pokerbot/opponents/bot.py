@@ -198,10 +198,12 @@ class StyleBot:
                 if pct < open_w * 0.5:
                     return self._raise(state, (p["open_size"] + ctx.limpers) * bb)
                 return Action.check_call()
-            iso = 1.0 if ctx.limpers == 0 else 0.7
-            if pct < open_w * iso:
+            # Over limpers the raising range tightens (isolation); limping is only ever the
+            # explicit limp band just below the raising range, so tight styles raise or fold.
+            raise_w = open_w if ctx.limpers == 0 else open_w * 0.7
+            if pct < raise_w:
                 return self._raise(state, (p["open_size"] + ctx.limpers) * bb)
-            if pct < open_w + p["limp_width"]:
+            if pct < raise_w + p["limp_width"]:
                 return Action.check_call()
             return self._fold_or_check(state)
 

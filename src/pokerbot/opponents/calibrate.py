@@ -5,8 +5,10 @@ Loss for a style with target pooled rates t_j and real within-style spread σ_j 
 where ŝ_j are the bot's simulated rates. L ≈ 1 means the bot sits about one typical
 player-to-player difference from the style's center on each stat.
 
-Simulated stats depend on the opponents, so tables mix the focal bot (3 of 6 seats) with bots of
-the other styles drawn by population share; all styles are calibrated in alternating rounds.
+Calibration is mean-field: a candidate x is the *center* of a style, and is scored by the stats
+of bots sampled around it (with the style's spread) at tables of bots sampled from the whole
+population, exactly as opponents are used later. The focal style takes 2 of 6 seats; all styles
+are calibrated in alternating rounds against the latest population.
 CMA-ES works in an unbounded space x, mapped to each parameter's bounds by a logistic function.
 Within a generation every candidate faces the same cards (common random numbers).
 """
@@ -29,7 +31,8 @@ LO = np.array([PARAMS[k][0] for k in CALIBRATED])
 HI = np.array([PARAMS[k][1] for k in CALIBRATED])
 DEPTH_RANGES = ((12.0, 25.0), (25.0, 60.0), (60.0, 150.0), (150.0, 250.0))  # bb, per bucket
 SEATS = 6
-FOCAL_SEATS = (0, 2, 4)
+FOCAL_SEATS = (0, 3)
+DEFAULT_SCALE = 0.33  # spread scale before it is measured (tune_scales); typical measured value
 
 
 def to_params(x: np.ndarray) -> dict[str, float]:
@@ -102,29 +105,44 @@ class Population:
     params: list[dict[str, float]]
     depth: list[np.ndarray]
     share: np.ndarray
+    noise: list[np.ndarray | None] | None = None  # scaled Cholesky factor of each style spread
+    scales: list[float] | None = None
 
     def bots(self, rng: np.random.Generator, count: int) -> list[StyleBot]:
         styles = rng.choice(len(self.params), size=count, p=self.share / self.share.sum())
-        return [
-            StyleBot(
-                {**self.params[k], "buyin": sample_buyin(self.depth[k], rng)},
-                int(rng.integers(2**31)),
-            )
-            for k in styles
-        ]
+        out = []
+        for k in styles:
+            noise = self.noise[k] if self.noise else None
+            out.append(make_bot(self.params[k], noise, self.depth[k], rng))
+        return out
+
+
+def make_bot(
+    center: dict[str, float], noise: np.ndarray | None, depth: np.ndarray, rng: np.random.Generator
+) -> StyleBot:
+    """A bot drawn around a style center: x ~ N(x_center, noise @ noise.T); buy-in from depth."""
+    params = dict(center)
+    if noise is not None:
+        params = to_params(to_x(center) + noise @ rng.standard_normal(noise.shape[1]))
+    return StyleBot({**params, "buyin": sample_buyin(depth, rng)}, int(rng.integers(2**31)))
 
 
 def simulate_rates(
-    params: dict[str, float], target: Target, pop: Population, seed: int, hands: int
+    params: dict[str, float],
+    target: Target,
+    pop: Population,
+    seed: int,
+    hands: int,
+    focal_noise: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Focal bot's simulated rates for the target's features (smoothed so logit is finite)."""
+    """Focal style's simulated rates for the target's features (smoothed so logit is finite).
+    With ``focal_noise``, each focal seat is a different bot sampled around ``params``."""
     rng = np.random.default_rng(seed)
     others = pop.bots(rng, SEATS - len(FOCAL_SEATS))
     seats, labels = [], []
     for s in range(SEATS):
         if s in FOCAL_SEATS:
-            buyin = sample_buyin(target.depth, rng)
-            seats.append(StyleBot({**params, "buyin": buyin}, int(rng.integers(2**31))))
+            seats.append(make_bot(params, focal_noise, target.depth, rng))
             labels.append("focal")
         else:
             seats.append(others.pop())
@@ -157,17 +175,25 @@ class StyleResult:
 
 
 def calibrate_style(
-    target: Target, pop: Population, x0: np.ndarray, iters: int, popsize: int, hands: int, seed: int
+    target: Target,
+    pop: Population,
+    x0: np.ndarray,
+    iters: int,
+    popsize: int,
+    hands: int,
+    seed: int,
+    focal_noise: np.ndarray | None = None,
+    sigma0: float = 0.6,
 ) -> StyleResult:
     es = cma.CMAEvolutionStrategy(
-        x0, 0.6, {"popsize": popsize, "seed": seed + 1, "maxiter": iters, "verbose": -9}
+        x0, sigma0, {"popsize": popsize, "seed": seed + 1, "maxiter": iters, "verbose": -9}
     )
     result = StyleResult(target.index, x0, float("inf"))
     gen = 0
     while not es.stop():
         xs = es.ask()
         gen_seed = seed * 10_000 + gen  # common random numbers within a generation
-        sims = [simulate_rates(to_params(x), target, pop, gen_seed, hands) for x in xs]
+        sims = [simulate_rates(to_params(x), target, pop, gen_seed, hands, focal_noise) for x in xs]
         losses = [loss(s, target) for s in sims]
         es.tell(xs, losses)
         result.samples_x += [list(map(float, x)) for x in xs]
@@ -177,7 +203,9 @@ def calibrate_style(
         )
         gen += 1
     result.x = np.asarray(es.result.xfavorite)  # distribution mean: robust to evaluation noise
-    final = simulate_rates(to_params(result.x), target, pop, seed * 10_000 + 9_999, hands * 3)
+    final = simulate_rates(
+        to_params(result.x), target, pop, seed * 10_000 + 9_999, hands * 3, focal_noise
+    )
     result.loss = loss(final, target)
     return result
 
@@ -212,23 +240,54 @@ def calibrate_format(
     workers: int,
     seed: int,
     log=None,
+    warm: list[dict] | None = None,
 ) -> tuple[list[StyleResult], Population]:
-    params = [init_params(dict(zip(t.features, t.rate.tolist(), strict=True))) for t in targets]
-    pop = Population(params, [t.depth for t in targets], np.array([t.share for t in targets]))
+    """``warm``: styles from an earlier bots file (x_mean, x_cov, x_scale) to start from; their
+    spread is used from round 0. Without it, round 0 calibrates centers with no spread."""
+    depth = [t.depth for t in targets]
+    share = np.array([t.share for t in targets])
+    if warm:
+        params = [to_params(np.array(w["x_mean"])) for w in warm]
+        scales = [w.get("x_scale") or DEFAULT_SCALE for w in warm]
+        noise = [_noise(np.array(w["x_cov"]), sc) for w, sc in zip(warm, scales, strict=True)]
+        sigma0 = 0.3
+    else:
+        params = [init_params(dict(zip(t.features, t.rate.tolist(), strict=True))) for t in targets]
+        scales = [DEFAULT_SCALE] * len(targets)
+        noise = [None] * len(targets)
+        sigma0 = 0.6
+    pop = Population(params, depth, share, noise)
     results: list[StyleResult] = []
     for r in range(rounds):
         jobs = [
-            (t, pop, to_x(pop.params[i]), iters, popsize, hands, seed + 97 * r + i)
+            (
+                t,
+                pop,
+                to_x(pop.params[i]),
+                iters,
+                popsize,
+                hands,
+                seed + 97 * r + i,
+                noise[i],
+                sigma0,
+            )
             for i, t in enumerate(targets)
         ]
         with ProcessPoolExecutor(min(workers, len(jobs))) as pool:
             results = list(pool.map(_run, jobs))
-        pop = Population(
-            [{**to_params(res.x), "buyin": 100.0} for res in results], pop.depth, pop.share
-        )
+        noise = [
+            _noise(spread(res, t), scales[i])
+            for i, (res, t) in enumerate(zip(results, targets, strict=True))
+        ]
+        pop = Population([to_params(res.x) for res in results], depth, share, noise)
+        pop.scales = scales
         if log:
             log(r, results)
     return results, pop
+
+
+def _noise(cov: np.ndarray, scale: float) -> np.ndarray:
+    return scale * np.linalg.cholesky(cov + 1e-9 * np.eye(len(cov)))
 
 
 def write_bots(path: Path, version: str, run_id: str, formats: dict[str, dict]) -> None:
