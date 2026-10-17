@@ -33,6 +33,22 @@ Convert to Parquet (`data/processed/handhq/<SITE>-<STAKE>NL.parquet`, one row pe
 uv run pokerbot data convert
 ```
 
+Per-player stat counts (replays every hand in pokerkit, counts stats per MATH.md §2; ~15 min on
+28 workers). Writes `data/processed/player_stats.parquet` with columns `pid, stat, n, x`:
+
+```bash
+uv run pokerbot data stats
+```
+
+Hands are skipped (not guessed) when the blinds don't identify positions: seat 1 must post the
+small blind and seat 2 a larger big blind. That excludes 65,295 hands (0.30%: missing small blind or
+reversed posts). Extra dead-blind posts and antes are fine; pokerkit handles them.
+
+iPoker (all 6.0M IPN hands, 28%) has no recorded stack sizes (stored as infinity). Those hands are
+replayed with a placeholder stack of 10,000 bb (`UNKNOWN_STACK_BB`): actions, pots and payoffs stay
+exact, but stack-depth stat splits skip them and all-in flags are missing. iPoker files also show
+one player's hole cards on every hand (the recording account); we ignore dealt hole cards.
+
 Coverage report (players with enough hands, as days of data accumulate):
 
 ```bash

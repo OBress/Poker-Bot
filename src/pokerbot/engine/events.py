@@ -11,6 +11,10 @@ from dataclasses import dataclass
 
 from pokerbot.engine.actions import ActionType, Street
 
+# Real hands from sites that didn't record stacks (all of iPoker in HandHQ) are replayed with this
+# stack, in big blinds. Stack-dependent stats (depth splits) must ignore stacks at or above it.
+UNKNOWN_STACK_BB = 10_000
+
 
 @dataclass(frozen=True, slots=True)
 class HandStart:

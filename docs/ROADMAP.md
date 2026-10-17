@@ -20,8 +20,9 @@ rule tests for showdown order, mucks, short all-ins, min-raises and information 
 ## Phase 1 — Real data (in progress)
 
 Done: all 21.6M HandHQ hands downloaded and converted to Parquet; player IDs verified consistent;
-34,301 players with ≥ 500 hands (see `data/SOURCES.md`). Remaining: parse actions into engine
-events and compute per-player stats.
+34,301 players with ≥ 500 hands (see `data/SOURCES.md`). Real hands replay through pokerkit into
+engine events; per-player stats computed with position, stack-depth and pot-type splits. Remaining:
+shown-hand strength stats (river bluff rate, showdown evidence).
 
 - Download PHH dataset (and IRC DB if useful); document provenance and terms in `data/SOURCES.md`.
 - Parser → unified event schema → Parquet.

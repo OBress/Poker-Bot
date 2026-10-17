@@ -59,8 +59,8 @@ different things.
 | Donk bet | out of position vs the previous street's aggressor, acts first | bets |
 | Aggression frequency (street) | any postflop decision facing a bet or with the option to bet | bets or raises |
 | WTSD | saw the flop | reached showdown |
-| W$SD | reached showdown | won at least part of a pot |
-| River bluff rate | bet or raised the river and showed down | the shown hand was in the bottom strength bucket (§4.5) |
+| W$SD | reached showdown | finished the hand a net winner (payoff > 0) |
+| River bluff rate *(not yet computed)* | bet or raised the river and showed down | the shown hand was in the bottom strength bucket (§4.5) |
 
 **Derived feature — positional awareness:**
   PA = logit(r̂_RFI,BTN) − logit(r̂_RFI,EP)
