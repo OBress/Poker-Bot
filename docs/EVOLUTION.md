@@ -143,6 +143,8 @@ Each generation:
 6. **Score** on **validation** seeds: cheap screen first (~10k hands); only promising candidates get
    the long evaluation.
 7. **Promote** a new champion only if it beats the current one with statistical significance.
+8. **Record** everything in the run (docs/TRACKING.md): every candidate's code, diff, prompt and
+   response, gate results, tuned params, train/val scores, and per-generation loss curves.
 
 Failure reports are what make the LLM useful:
 

@@ -40,7 +40,8 @@ Phase 0 done (engine, LLM client). Next: Phase 1, real hand-history data.
 See [docs/ROADMAP.md](docs/ROADMAP.md) for phases and exit criteria,
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design, and
 [docs/EVOLUTION.md](docs/EVOLUTION.md) for how the LLM edits the algorithms, and
-[docs/MATH.md](docs/MATH.md) for the formulas behind stats, classification, exploitation and scoring.
+[docs/MATH.md](docs/MATH.md) for the formulas behind stats, classification, exploitation and scoring,
+and [docs/TRACKING.md](docs/TRACKING.md) for what every training run records.
 
 ## Setup
 

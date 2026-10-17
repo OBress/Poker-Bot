@@ -58,6 +58,66 @@ def cmd_data_coverage(args: argparse.Namespace) -> None:
     print(breakdown(Path(args.data), args.min_hands))
 
 
+def cmd_data_stats(args: argparse.Namespace) -> None:
+    import time
+    from pathlib import Path
+
+    from pokerbot.stats.aggregate import compute_player_stats
+    from pokerbot.track import Run
+
+    start = time.perf_counter()
+    config = {k: v for k, v in vars(args).items() if k != "func"}
+    with Run.start(
+        "player-stats", kind="data", config=config, data={"hands": Path(args.data)}
+    ) as run:
+        info = compute_player_stats(
+            Path(args.data), Path(args.out), workers=args.workers, limit_files=args.limit_files
+        )
+        seconds = time.perf_counter() - start
+        run.finish(**info, seconds_total=seconds)
+    print(f"{info['players']:,} players, {info['rows']:,} rows, {seconds:.0f}s")
+
+
+def cmd_runs_list(args: argparse.Namespace) -> None:
+    from pokerbot.track import list_runs
+
+    _tables()
+    print(list_runs())
+
+
+def cmd_runs_show(args: argparse.Namespace) -> None:
+    import json
+
+    from pokerbot.track import find_run, latest_metrics
+    from pokerbot.track.read import load_events, load_meta
+
+    _tables()
+    d = find_run(args.run)
+    meta = load_meta(d)
+    keep = ("id", "kind", "status", "started", "ended", "seconds", "git", "seeds", "summary")
+    print(json.dumps({k: meta[k] for k in keep}, indent=2))
+    print(f"config: {json.dumps(meta['config'])}")
+    print(latest_metrics(d))
+    events = load_events(d)
+    if not events.is_empty():
+        print(events.group_by("kind").len().sort("len", descending=True))
+
+
+def cmd_runs_plot(args: argparse.Namespace) -> None:
+    from pokerbot.track import find_run, plot_run
+
+    print(plot_run(find_run(args.run), names=args.metric or None))
+
+
+def _tables() -> None:
+    import polars as pl
+
+    pl.Config.set_tbl_rows(200)
+    pl.Config.set_tbl_cols(20)
+    pl.Config.set_tbl_formatting("ASCII_MARKDOWN")
+    pl.Config.set_tbl_hide_column_data_types(True)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="pokerbot")
     sub = parser.add_subparsers(required=True)
@@ -82,6 +142,23 @@ def main(argv: list[str] | None = None) -> None:
     coverage.add_argument("--data", default=HANDHQ_OUT)
     coverage.add_argument("--min-hands", type=int, default=500)
     coverage.set_defaults(func=cmd_data_coverage)
+
+    stats = data.add_parser("stats", help="per-player stat counts over all real hands")
+    stats.add_argument("--data", default=HANDHQ_OUT)
+    stats.add_argument("--out", default="data/processed/player_stats.parquet")
+    stats.add_argument("--workers", type=int, default=6)
+    stats.add_argument("--limit-files", type=int, default=None)
+    stats.set_defaults(func=cmd_data_stats)
+
+    runs = sub.add_parser("runs", help="tracked experiment runs").add_subparsers(required=True)
+    runs.add_parser("list", help="all runs").set_defaults(func=cmd_runs_list)
+    show = runs.add_parser("show", help="metadata, metrics summary and events of a run")
+    show.add_argument("run", nargs="?", default="latest", help="id, unique substring, or latest")
+    show.set_defaults(func=cmd_runs_show)
+    plot = runs.add_parser("plot", help="plot a run's metrics to artifacts/metrics.png")
+    plot.add_argument("run", nargs="?", default="latest")
+    plot.add_argument("--metric", action="append", help="only metrics containing this text")
+    plot.set_defaults(func=cmd_runs_plot)
 
     args = parser.parse_args(argv)
     args.func(args)

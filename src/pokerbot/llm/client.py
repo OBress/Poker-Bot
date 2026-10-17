@@ -76,7 +76,16 @@ class Usage:
 
 
 class LLMClient:
-    def __init__(self, settings: LLMSettings, client: Any | None = None, cache: bool = True):
+    """``run``: an optional ``track.Run``; when set, every call (prompt, response, tokens, latency,
+    cache hit, purpose) is recorded in the run's llm.jsonl."""
+
+    def __init__(
+        self,
+        settings: LLMSettings,
+        client: Any | None = None,
+        cache: bool = True,
+        run: Any | None = None,
+    ):
         self.settings = settings
         if client is None:
             from openai import OpenAI
@@ -91,6 +100,7 @@ class LLMClient:
         self._cache = cache
         self._limit = threading.Semaphore(settings.max_concurrency)
         self.usage = Usage()
+        self.run = run
         if cache:
             settings.cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -104,6 +114,7 @@ class LLMClient:
         temperature: float = 0.8,
         max_tokens: int = 4096,
         sample: int = 0,
+        purpose: str = "",
     ) -> Completion:
         """One completion. ``sample`` distinguishes repeated draws of the same prompt in the
         cache, so asking for samples 0..k-1 gives k different (but reproducible) answers."""
@@ -121,6 +132,7 @@ class LLMClient:
             data = json.loads(path.read_text(encoding="utf-8"))
             completion = Completion(**{**data, "cached": True})
             self.usage.add(completion)
+            self._record(purpose, messages, completion, sample)
             return completion
 
         with self._limit:
@@ -142,18 +154,26 @@ class LLMClient:
             with (self.settings.cache_dir / "usage.jsonl").open("a", encoding="utf-8") as f:
                 f.write(json.dumps({"key": key, "time": time.time(), **data, "text": None}) + "\n")
         self.usage.add(completion)
+        self._record(purpose, messages, completion, sample)
         return completion
+
+    def _record(
+        self, purpose: str, messages: Sequence[Message], completion: Completion, sample: int
+    ) -> None:
+        if self.run is not None:
+            self.run.log_llm_call(purpose, list(messages), completion, sample=sample)
 
     def complete_many(
         self,
         prompts: Sequence[Sequence[Message]],
         temperature: float = 0.8,
         max_tokens: int = 4096,
+        purpose: str = "",
     ) -> list[Completion]:
         """Run many prompts concurrently (bounded by ``max_concurrency``), in order."""
         with ThreadPoolExecutor(self.settings.max_concurrency) as pool:
             futures = [
-                pool.submit(self.complete, p, temperature, max_tokens, sample=i)
+                pool.submit(self.complete, p, temperature, max_tokens, sample=i, purpose=purpose)
                 for i, p in enumerate(prompts)
             ]
             return [f.result() for f in futures]

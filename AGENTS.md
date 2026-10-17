@@ -26,7 +26,11 @@ check the current phase's exit criteria.
    log, or commit it. `.env.example` holds placeholders only.
 6. **Data stays out of git.** `data/raw/` and `data/processed/` are git-ignored. Document every
    source, its URL and terms in `data/SOURCES.md`.
-7. **Statistical honesty.** Every reported win rate has a confidence interval and a hand count. Do
+7. **Track every run.** Any job that trains, tunes, evaluates or builds data runs inside
+   `pokerbot.track.Run` and logs the metrics required for its kind in
+   [docs/TRACKING.md](docs/TRACKING.md). LLM clients used by a run get `run=` so every prompt and
+   response is recorded. Reported numbers must cite the run id they came from.
+8. **Statistical honesty.** Every reported win rate has a confidence interval and a hand count. Do
    not claim an improvement that isn't significant on the test set.
 
 ## Program contracts (evolved code)
@@ -74,6 +78,10 @@ uv run pokerbot bench
 uv run pokerbot llm ping
 ```
 
+```bash
+uv run pokerbot data stats
+```
+
 ## Testing expectations
 
 - Engine changes: run the pokerkit cross-check tests (payouts, side pots, showdowns) and
@@ -81,7 +89,8 @@ uv run pokerbot llm ping
   pokerkit asks for some no-op checks our engine skips (see the test harness), nothing else differs.
 - Information hiding is a correctness property: anything a policy or observer receives must be
   public or its own. Add a test whenever you add a new event or field.
-- Stats changes: unit tests on hand-built histories with known answers.
+- Stats changes: unit tests on hand-built histories with known answers, plus the round-trip test
+  in `tests/test_replay_stats.py` (engine hand -> PHH -> replay must give identical stats).
 - Evolve changes: test the sandbox rejects disallowed imports, infinite loops and crashes.
 - Don't hit the real Luminal API in unit tests; use the cached/mocked client.
 
