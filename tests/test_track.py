@@ -97,3 +97,21 @@ def test_find_run_rejects_ambiguous(tmp_path: Path) -> None:
     assert find_run("latest", tmp_path).name.startswith(
         sorted(p.name for p in tmp_path.iterdir())[-1][:15]
     )
+
+
+def test_git_diff_with_unicode_is_captured(tmp_path: Path, monkeypatch) -> None:
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.chdir(repo)
+    for cmd in (["init", "-q"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
+        subprocess.run(["git", *cmd], check=True)
+    (repo / "f.txt").write_text("a\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], check=True)
+    subprocess.run(["git", "commit", "-qm", "x"], check=True)
+    (repo / "f.txt").write_text("σ ≈ − ✓\n", encoding="utf-8")
+    run = Run.start("u", kind="eval", root=tmp_path / "exp")
+    run.finish()
+    assert load_meta(run.dir)["git"]["dirty"]
+    assert "≈" in (run.dir / "git.diff").read_text(encoding="utf-8")
