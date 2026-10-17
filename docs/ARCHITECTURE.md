@@ -107,9 +107,19 @@ Computes HUD-style statistics per player, with counts (not only ratios) so we ca
 shrinkage for small samples:
 
 - Preflop: VPIP, PFR, 3-bet, fold-to-3-bet, 4-bet, steal attempt, fold-to-steal, limp, cold-call.
-- Postflop: aggression factor and frequency, c-bet (flop/turn), fold-to-c-bet, check-raise,
-  donk-bet, WTSD, W$SD, river bet frequency, bet-size distribution (as fractions of pot).
-- Positional splits where sample allows.
+- Postflop: aggression frequency, c-bet (flop/turn), fold-to-c-bet, check-raise, donk-bet, WTSD,
+  W$SD, river bluff rate, bet-size distribution (as fractions of pot).
+- Context splits, each a separate count pair:
+  - **Position** (EP, MP, CO, BTN, SB, BB), including open-raise by position and
+    **positional awareness** (button opening rate vs early-position opening rate). Good players
+    widen a lot on the button; weak players play the same hands everywhere.
+  - **Effective stack depth** (< 25, 25–60, 60–150, > 150 bb).
+  - **Pot type**: heads-up vs multiway (good players c-bet and bluff much less multiway).
+  - **Preflop line**: single-raised, 3-bet, 4-bet+, limped.
+  - **In position vs out of position** postflop.
+- Shown hands: strength bucket given the betting line, the most informative (and rarest) signal.
+
+Exact opportunity/occurrence definitions for every stat are in [MATH.md](MATH.md) §1–§2.
 
 Same code runs on real data (offline) and on simulated events (online, inside evaluations).
 
@@ -179,11 +189,16 @@ class Classifier:
     def posterior(self, seat: int, feats: SeatFeatures) -> np.ndarray: ...  # (n_styles,), sums to 1
 ```
 
-Seed implementation: Bayesian update of per-seat stat counts with Beta priors, Gaussian likelihood
-against each style profile → posterior. The LLM's job is to find better feature use, likelihood
+Output: a probability vector p over the K styles (non-negative, sums to 1), plus a continuous
+estimate θ̂ of the player's stats, so players between two styles are handled correctly.
+
+Seed implementations (formulas in [MATH.md](MATH.md) §4): (A) Beta-Binomial naive Bayes per stat,
+(B) correlated Gaussian likelihood in logit space with per-player measurement noise. Both start at
+the population mix with no data and sharpen as hands accumulate; both add showdown evidence and
+optional count decay for drifting players. The LLM's job is to find better feature use, likelihood
 models, handling of sparse data, drift detection, etc.
 
-**Fitness** (higher is better), measured on validation seeds:
+**Fitness** (higher is better, exact definitions in [MATH.md](MATH.md) §6), on validation seeds:
 - Mean log-loss of the posterior at checkpoints {10, 25, 50, 100, 200} hands (weighted toward early).
 - Accuracy and calibration (ECE) at each checkpoint.
 - **Real-data transfer:** on held-out real players, label = cluster from *all* their hands;
@@ -192,7 +207,8 @@ models, handling of sparse data, drift detection, etc.
 
 ### 4.8 `exploit/` — evolved program #2
 
-Designed as **baseline + deviations**, which is how safe exploitation works:
+Designed as **baseline + deviations**, which is how safe exploitation works (seed policy: an
+exponential tilt of the baseline scaled by belief confidence; math in [MATH.md](MATH.md) §5):
 
 ```python
 PARAMS: dict[str, float]
@@ -202,7 +218,8 @@ class Exploiter:
     def policy(self, state, beliefs, feats, baseline: ActionDist) -> ActionDist: ...  # harness samples
 ```
 
-- Start from the baseline's action distribution at this decision.
+- Start from the baseline's action distribution at this decision. Position, stack depth and pot
+  type are part of the decision state, so both the baseline and the deviations depend on them.
 - Apply style-conditioned adjustments (e.g. vs calling station: value-bet thinner, cut bluffs; vs
   nit: steal more, fold to its raises; vs maniac: call down lighter, trap more).
 - Scale the deviation by **confidence** in the belief: with a flat posterior the agent plays the

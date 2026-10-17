@@ -1,7 +1,8 @@
 # Evolvable programs: how the LLM edits the algorithms
 
 This is the detailed design for the classifier and exploiter programs that DeepSeek rewrites between
-rounds. It expands ARCHITECTURE §4.7–4.9.
+rounds. It expands ARCHITECTURE §4.7–4.9. The formulas for the seed programs and the scoring rules are in
+[MATH.md](MATH.md).
 
 ## 1. The problem
 
@@ -80,7 +81,7 @@ in `PARAMS`. It may not change signatures, imports, or the frozen code.
 | | Type | Notes |
 |---|---|---|
 | in | `Event` stream | The engine's public events only: blinds, actions (with pot and to-call), board cards, **showdown reveals and mucks**. No hole cards of other players unless they were actually shown. |
-| in | `SeatFeatures` | Maintained by the harness for every seat: opportunity/occurrence **counts** for each HUD stat (VPIP, PFR, 3-bet, c-bet, fold-to-c-bet, WTSD, …), split by street and position, plus bet-size histograms and shown-hand strengths. Counts, not ratios, so programs can do proper small-sample statistics. |
+| in | `SeatFeatures` | Maintained by the harness for every seat: opportunity/occurrence **counts** for each stat (VPIP, PFR, 3-bet, c-bet, fold-to-c-bet, WTSD, …), split by position, stack depth, pot type (heads-up/multiway), preflop line and in/out of position, plus bet-size histograms and shown-hand strengths by line. Counts, not ratios, so programs can do proper small-sample statistics. Definitions: [MATH.md](MATH.md) §1–§2. |
 | in | `StyleProfiles` | The K style definitions from the real-data clustering (means, covariances, population shares). Read-only. |
 | out | `np.ndarray` shape (K,) | Harness clips negatives, renormalizes, and penalizes invalid output. |
 
@@ -88,7 +89,7 @@ in `PARAMS`. It may not change signatures, imports, or the frozen code.
 
 | | Type | Notes |
 |---|---|---|
-| in | `DecisionState` | The same object any player gets: own hole cards, board, pot, stacks, bets, legal actions, public action history. |
+| in | `DecisionState` | The same object any player gets: own hole cards, board, pot, stacks, bets, legal actions, public action history. The harness adds derived context: own position, effective stack in bb, players in the pot, in/out of position. |
 | in | `beliefs` | Current classifier posterior for each opponent seat. |
 | in | `SeatFeatures` | Same as above, for every opponent. |
 | in | `baseline` | The equilibrium baseline's **probability distribution** over the abstract action menu at this decision. |

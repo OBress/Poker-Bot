@@ -7,7 +7,9 @@ Guidance for AI coding agents (Claude Code, Codex, etc.) and humans working in t
 A research codebase testing whether a style-classifying, exploiting poker agent beats an equilibrium
 (GTO-style) baseline against exploitable opponents. Read [README.md](README.md), then
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/ROADMAP.md](docs/ROADMAP.md) and
-[docs/EVOLUTION.md](docs/EVOLUTION.md) before changing anything structural. Work phase by phase;
+[docs/EVOLUTION.md](docs/EVOLUTION.md) before changing anything structural, and
+[docs/MATH.md](docs/MATH.md) before touching stats, classifiers, exploiters or scoring. The scoring
+rules in MATH.md §6–§7 are fixed; change them only deliberately and record why. Work phase by phase;
 check the current phase's exit criteria.
 
 ## Non-negotiable rules
