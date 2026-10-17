@@ -44,7 +44,13 @@ Finding: styles differ mostly preflop; postflop tendencies vary much less across
 
 **Exit:** a short report: chosen K, style table (centroids, shares), stability score, plots.
 
-## Phase 3 — Synthetic opponents
+## Phase 3 — Synthetic opponents (working version; criterion not fully met)
+
+Done: parametric `StyleBot` (24 parameters), mean-field CMA-ES calibration per style, measured
+per-style spread, seat sampler, validation (`profiles/bots-v2.json`). Validation of ~72 randomized
+bots per short-handed style: 110/144 style-stat pairs (76%) within one real-player σ; most of the
+rest within 2σ. Known misses: short-stacker turn folding (z ≈ +4.8), passive limper's flop
+c-bet defense (z ≈ −3.0), TAG limping (z ≈ +2.0). Heads-up and full-ring styles not calibrated yet.
 
 - Parametric bot policy with parameter vector θ.
 - Calibrate θ per style (CMA-ES on stat-matching loss) and fit per-style θ covariance.
