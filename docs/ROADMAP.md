@@ -17,7 +17,11 @@ rule tests for showdown order, mucks, short all-ins, min-raises and information 
 **Exit:** 10k random hands agree with pokerkit on every payout; throughput benchmark recorded;
 `pokerbot llm ping` returns a completion.
 
-## Phase 1 — Real data
+## Phase 1 — Real data (in progress)
+
+Done: all 21.6M HandHQ hands downloaded and converted to Parquet; player IDs verified consistent;
+34,301 players with ≥ 500 hands (see `data/SOURCES.md`). Remaining: parse actions into engine
+events and compute per-player stats.
 
 - Download PHH dataset (and IRC DB if useful); document provenance and terms in `data/SOURCES.md`.
 - Parser → unified event schema → Parquet.
