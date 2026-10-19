@@ -37,6 +37,7 @@ CALIBRATED = tuple(k for k in PARAMS if k != "buyin")
 DEPTH_RANGES = ((12.0, 25.0), (25.0, 60.0), (60.0, 150.0), (150.0, 250.0))  # bb, per bucket
 DEFAULT_SCALE = 0.33  # spread scale before it is measured (tune_scales); typical measured value
 NEW_PARAM_SD = 0.5  # x-space spread given to parameters a warm start doesn't have
+WARM_CLIP = 2.5  # warm-start x is clipped to ±this (≈ 8%–92% of each parameter's range)
 # Showdown terms of the loss: mean shown equity per group of betting lines vs real players of the
 # style (``opponents.showdown``). A miss of SHOWDOWN_TOL equity counts like a 1σ stat miss.
 LINE_GROUPS = {
@@ -421,10 +422,12 @@ def calibrate_format(
     share = np.array([t.share for t in targets])
     if warm:
         starts = [warm_style(w, warm_names) for w in warm]
-        params = [to_params(x) for x, _ in starts]
+        # Pull parameters off their bounds: deep in the logistic tail (|x| ~ 7) CMA steps can't
+        # move them, which froze e.g. three_bet at 0 once noise no longer supplied the 3-bets.
+        params = [to_params(np.clip(x, -WARM_CLIP, WARM_CLIP)) for x, _ in starts]
         scales = [w.get("x_scale") or DEFAULT_SCALE for w in warm]
         noise = [_noise(cov, sc) for (_, cov), sc in zip(starts, scales, strict=True)]
-        sigma0 = 0.3
+        sigma0 = 0.4
     else:
         params = [init_params(dict(zip(t.features, t.rate.tolist(), strict=True))) for t in targets]
         scales = [DEFAULT_SCALE] * len(targets)
