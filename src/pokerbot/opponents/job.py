@@ -9,18 +9,25 @@ import numpy as np
 
 from pokerbot.archetypes.membership import depth_shares, format_stats, hand_quantiles
 from pokerbot.archetypes.profiles import load_profiles
-from pokerbot.opponents.bot import STRUCTURE, STRUCTURE_PARAMS
+from pokerbot.opponents.bot import STRUCTURE, STRUCTURE_BOUNDS, STRUCTURE_PARAMS
 from pokerbot.opponents.calibrate import (
     CALIBRATED,
+    GROUPS,
     LAYOUT,
+    LINE_GROUPS,
+    SHOWDOWN_TOL,
     calibrate_format,
     feature_z,
     final_features,
+    group_equity,
     make_targets,
+    showdown_z,
+    split,
     spread,
     to_params,
     write_bots,
 )
+from pokerbot.opponents.showdown import load_real
 from pokerbot.track import Run
 
 
@@ -37,16 +44,24 @@ def run_calibration(
     workers: int = 8,
     seed: int = 0,
     warm_start: Path | None = None,
+    real_showdowns: Path | None = None,
 ) -> Path:
+    """``real_showdowns``: real shown-hand tables (``bots showdown-real``); when given, the loss
+    also matches each style's mean shown equity per line group (``calibrate.LINE_GROUPS``)."""
     config = dict(
         profiles=str(profiles_path), formats=list(formats), rounds=rounds, iters=iters,
         popsize=popsize, hands=hands, workers=workers, calibrated=list(CALIBRATED),
         structure=STRUCTURE, layouts={f: vars(LAYOUT[f]) for f in formats},
         warm_start=str(warm_start) if warm_start else None,
+        real_showdowns=str(real_showdowns) if real_showdowns else None,
+        line_groups=LINE_GROUPS, showdown_tol=SHOWDOWN_TOL,
     )  # fmt: skip
+    data = {"profiles": profiles_path, "player_stats": stats_path}
+    if real_showdowns:
+        data["real_showdowns"] = real_showdowns
     with Run.start(
         f"bots-{version}", kind="calibrate", config=config, seeds={"cma": seed},
-        data={"profiles": profiles_path, "player_stats": stats_path},
+        data=data,
     ) as run:  # fmt: skip
         profiles = load_profiles(profiles_path)
         out: dict[str, dict] = {}
@@ -56,7 +71,8 @@ def run_calibration(
             depth = depth_shares(prof, stats, fmt)
             hands_q = hand_quantiles(stats, fmt)
             del stats
-            targets = make_targets(prof, depth)
+            real = load_real(real_showdowns, fmt) if real_showdowns else None
+            targets = make_targets(prof, depth, group_equity(real[0]) if real else None)
 
             def log(r, results, fmt=fmt, targets=targets):
                 for res in results:
@@ -95,6 +111,8 @@ def run_calibration(
                     res.x, t, pop, seed + 12345, hands, pop.noise[t.index], layout, hands_q, 6
                 )
                 z = feature_z(final, t)
+                sdz = showdown_z(final, t)
+                sums = split(final, t)[1]
                 styles.append(
                     {
                         "index": t.index,
@@ -115,11 +133,23 @@ def run_calibration(
                             }
                             for j, f in enumerate(t.features)
                         },
+                        "showdown_check": {
+                            g: {
+                                "real_equity": float(t.showdown[i]),
+                                "sim_equity": float(sums[0, i] / max(sums[2, i], 1)),
+                                "sim_shown": float(sums[2, i]),
+                                "z": float(sdz[i]),
+                            }
+                            for i, g in enumerate(GROUPS)
+                        }
+                        if t.showdown is not None
+                        else None,
                     }
                 )
                 run.log_metric(f"{fmt}/{t.name}/check_max_abs_z", float(np.abs(z).max()))
             out[fmt] = {
                 "calibrated": list(CALIBRATED),
+                "bounds": {k: list(STRUCTURE_BOUNDS[STRUCTURE][k]) for k in CALIBRATED},
                 "layout": vars(layout),
                 "hands_cap": hands,
                 "member_hands_percentiles": hands_q.tolist(),

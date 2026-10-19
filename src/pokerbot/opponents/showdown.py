@@ -210,9 +210,8 @@ def real_tables(
         add(saved["tables"], saved["info"])
     if parts_dir:
         parts_dir.mkdir(parents=True, exist_ok=True)
-    with ProcessPoolExecutor(
-        workers, initializer=_init_worker, initargs=(members,), max_tasks_per_child=10
-    ) as pool:  # recycled workers keep memory flat (~0.4 GB each)
+    # ~0.5 GB per worker. (max_tasks_per_child would cap it, but hangs the pool on Windows.)
+    with ProcessPoolExecutor(workers, initializer=_init_worker, initargs=(members,)) as pool:
         futures = {pool.submit(_process_chunk, *j[:3]): j[3] for j in jobs}
         for i, fut in enumerate(as_completed(futures), 1):
             part, part_info = fut.result()

@@ -24,7 +24,9 @@ from pokerbot.opponents.calibrate import (
     calibrate_style,
     init_params,
     loss,
+    showdown_z,
     simulate_features,
+    split,
     to_params,
     to_x,
     warm_style,
@@ -122,8 +124,32 @@ def test_layouts_fill_every_format() -> None:
     t = _target()
     pop = Population([init_params({})], [t.depth], np.array([1.0]))
     for fmt, layout in LAYOUT.items():
-        z = simulate_features(init_params({}), t, pop, 3, 60, layout=layout)
+        z, sums = split(simulate_features(init_params({}), t, pop, 3, 60, layout=layout), t)
         assert z.shape == (len(FEATURES),) and np.isfinite(z).all(), fmt
+        assert sums.sum() == 0  # no showdown target: shown hands aren't tracked
+
+
+def test_showdown_terms_enter_the_loss() -> None:
+    t = _target()
+    t.showdown = np.array([0.8, 0.75, 0.45, np.nan])  # no real all-in data
+    pop = Population([init_params({})], [t.depth], np.array([1.0]))
+    sim = simulate_features(init_params({}), t, pop, 4, 400)
+    total, _, n = split(sim, t)[1]
+    assert n[:3].sum() >= 10 and np.all(total <= n)
+    sdz = showdown_z(sim, t)
+    assert sdz.shape == (4,) and sdz[3] == 0.0 and np.isfinite(sdz).all()
+    far = replace(t, showdown=np.array([0.0, 0.0, 0.0, np.nan]))
+    assert loss(sim, far) > loss(sim, t)
+
+
+def test_frozen_bounds_decode_v2_files_unchanged() -> None:
+    from pokerbot.opponents.bot import STRUCTURE_BOUNDS
+
+    names = STRUCTURE_PARAMS[2]
+    x = np.zeros(len(names))
+    old = to_params(x, names, STRUCTURE_BOUNDS[2])
+    assert old["defend"] == (0.5 + 6.0) / 2 and old["noise"] == 0.1
+    assert to_params(x, names)["defend"] != old["defend"]  # current bounds differ
 
 
 def test_warm_start_maps_older_parameter_sets() -> None:

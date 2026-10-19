@@ -29,13 +29,25 @@ import cma
 import numpy as np
 
 from pokerbot.archetypes.features import FeatureTransform
-from pokerbot.opponents.bot import PARAMS, STRUCTURE, StyleBot
+from pokerbot.opponents.bot import PARAMS, STRUCTURE, STRUCTURE_BOUNDS, StyleBot
 from pokerbot.opponents.simulate import simulate_stats
+from pokerbot.stats.showdown import LINES, shown_hands
 
 CALIBRATED = tuple(k for k in PARAMS if k != "buyin")
 DEPTH_RANGES = ((12.0, 25.0), (25.0, 60.0), (60.0, 150.0), (150.0, 250.0))  # bb, per bucket
 DEFAULT_SCALE = 0.33  # spread scale before it is measured (tune_scales); typical measured value
 NEW_PARAM_SD = 0.5  # x-space spread given to parameters a warm start doesn't have
+# Showdown terms of the loss: mean shown equity per group of betting lines vs real players of the
+# style (``opponents.showdown``). A miss of SHOWDOWN_TOL equity counts like a 1σ stat miss.
+LINE_GROUPS = {
+    "aggressive": ("bbb", "river_bet"),
+    "calling": ("call_down", "river_call"),
+    "passive": ("bet_check", "call_check", "check_down"),
+    "all_in": ("all_in",),
+}
+GROUP_OF_LINE = {line: g for g, lines in LINE_GROUPS.items() for line in lines}
+GROUPS = tuple(LINE_GROUPS)
+SHOWDOWN_TOL = 0.04
 
 
 @dataclass(frozen=True)
@@ -52,18 +64,28 @@ LAYOUT = {
 }
 
 
-def _bounds(names: tuple[str, ...]) -> tuple[np.ndarray, np.ndarray]:
-    return np.array([PARAMS[k][0] for k in names]), np.array([PARAMS[k][1] for k in names])
+Bounds = dict[str, tuple[float, float]]
 
 
-def to_params(x: np.ndarray, names: tuple[str, ...] = CALIBRATED) -> dict[str, float]:
-    lo, hi = _bounds(names)
+def _bounds(names: tuple[str, ...], bounds: Bounds | None) -> tuple[np.ndarray, np.ndarray]:
+    b = bounds or STRUCTURE_BOUNDS[STRUCTURE]
+    return np.array([b[k][0] for k in names]), np.array([b[k][1] for k in names])
+
+
+def to_params(
+    x: np.ndarray, names: tuple[str, ...] = CALIBRATED, bounds: Bounds | None = None
+) -> dict[str, float]:
+    """Unbounded x -> parameters. ``bounds`` default to the current structure's; a frozen bots
+    file decodes with the bounds it was calibrated under."""
+    lo, hi = _bounds(names, bounds)
     theta = lo + (hi - lo) / (1 + np.exp(-np.asarray(x)))
     return dict(zip(names, theta.tolist(), strict=True))
 
 
-def to_x(params: dict[str, float], names: tuple[str, ...] = CALIBRATED) -> np.ndarray:
-    lo, hi = _bounds(names)
+def to_x(
+    params: dict[str, float], names: tuple[str, ...] = CALIBRATED, bounds: Bounds | None = None
+) -> np.ndarray:
+    lo, hi = _bounds(names, bounds)
     theta = np.array([params.get(k, PARAMS[k][2]) for k in names])
     u = np.clip((theta - lo) / (hi - lo), 1e-3, 1 - 1e-3)
     return np.log(u / (1 - u))
@@ -94,13 +116,30 @@ class Target:
     rate: np.ndarray  # pooled real rates (starting point and reports)
     depth: np.ndarray  # stack-depth bucket shares
     share: float
+    showdown: np.ndarray | None = None  # real mean shown equity per GROUPS entry (nan: no data)
 
     @property
     def features(self) -> tuple[str, ...]:
         return self.transform.features
 
 
-def make_targets(fmt_profile: dict, depth: np.ndarray) -> list[Target]:
+def group_equity(real) -> np.ndarray:
+    """(K, G) mean shown equity per style and line group from a real ``RangeTable``; nan where
+    the group has fewer than 200 effective shown hands."""
+    out = np.full((real.k, len(GROUPS)), np.nan)
+    for g, lines in enumerate(LINE_GROUPS.values()):
+        idx = [LINES.index(line) for line in lines]
+        w = real.counts[:, idx].sum(axis=(1, 2))
+        n_eff = w**2 / np.maximum(real.w2[:, idx].sum(axis=1), 1e-12)
+        mean = real.eq_sum[:, idx].sum(axis=1) / np.maximum(w, 1e-12)
+        out[:, g] = np.where(n_eff >= 200, mean, np.nan)
+    return out
+
+
+def make_targets(
+    fmt_profile: dict, depth: np.ndarray, showdown: np.ndarray | None = None
+) -> list[Target]:
+    """``showdown``: (K, G) real mean shown equity per line group (``group_equity``)."""
     t = fmt_profile["transform"]
     return [
         Target(
@@ -112,6 +151,7 @@ def make_targets(fmt_profile: dict, depth: np.ndarray) -> list[Target]:
             rate=np.array([s["pooled_rate"][f] for f in t.features]),
             depth=depth[s["index"]],
             share=s["share"],
+            showdown=None if showdown is None else showdown[s["index"]],
         )
         for s in fmt_profile["styles"]
     ]
@@ -177,9 +217,13 @@ def simulate_features(
     """Mean standardized feature vector of the focal bots, each measured over ``hands`` hands,
     or, with ``hands_q`` (percentiles of real players' hand counts), over a hand count drawn per
     table from it with ``hands`` as the cap (``draw_hands``).
-    With ``focal_noise``, each focal seat is a different bot sampled around ``params``."""
+    With ``focal_noise``, each focal seat is a different bot sampled around ``params``.
+
+    Returns D features followed by 3·G showdown sums of the focal bots' shown hands per line
+    group: equity sums, squared-equity sums, counts (``split`` separates them)."""
     rng = np.random.default_rng(seed)
     zs = []
+    sd = np.zeros((3, len(GROUPS)))
     for _ in range(layout.tables):
         sim_hands, scale = (hands, 1.0) if hands_q is None else draw_hands(hands_q, rng, hands)
         others = pop.bots(rng, layout.seats - len(layout.focal))
@@ -191,13 +235,27 @@ def simulate_features(
             else:
                 seats.append(others.pop())
                 labels.append("other")
-        counts = simulate_stats(seats, labels, sim_hands, int(rng.integers(2**31)))
+
+        def on_hand(events) -> None:
+            for sh in shown_hands(events):
+                if sh.seat in layout.focal:
+                    g = GROUPS.index(GROUP_OF_LINE[sh.line])
+                    sd[:, g] += (sh.equity, sh.equity**2, 1.0)
+
+        track = on_hand if target.showdown is not None else None
+        counts = simulate_stats(seats, labels, sim_hands, int(rng.integers(2**31)), on_hand=track)
         for s in layout.focal:
             c = counts[f"focal{s}"]
             n = scale * np.array([[c.get(f, (0, 0))[0] for f in target.features]], dtype=float)
             x = scale * np.array([[c.get(f, (0, 0))[1] for f in target.features]], dtype=float)
             zs.append(target.transform.transform(n, x)[0][0])
-    return np.mean(zs, axis=0)
+    return np.concatenate([np.mean(zs, axis=0), sd.ravel()])
+
+
+def split(sim: np.ndarray, target: Target) -> tuple[np.ndarray, np.ndarray]:
+    """(features, showdown sums (3, G)) of a ``simulate_features`` vector."""
+    d = len(target.features)
+    return sim[:d], sim[d:].reshape(3, len(GROUPS))
 
 
 def logit(r: np.ndarray) -> np.ndarray:
@@ -205,13 +263,27 @@ def logit(r: np.ndarray) -> np.ndarray:
     return np.log(r / (1 - r))
 
 
-def feature_z(z: np.ndarray, target: Target) -> np.ndarray:
+def feature_z(sim: np.ndarray, target: Target) -> np.ndarray:
     """Per-stat distance of simulated features from the style center, in style σ."""
-    return (z - target.mean) / target.sd
+    return (split(sim, target)[0] - target.mean) / target.sd
 
 
-def loss(z: np.ndarray, target: Target) -> float:
-    return float(np.mean(feature_z(z, target) ** 2))
+def showdown_z(sim: np.ndarray, target: Target) -> np.ndarray:
+    """Per line group: (sim − real mean shown equity) / sqrt(tol² + sim standard error²).
+    Groups without real data or simulated shown hands give 0."""
+    if target.showdown is None:
+        return np.zeros(0)
+    total, sq, n = split(sim, target)[1]
+    mean = total / np.maximum(n, 1)
+    var = np.maximum(sq / np.maximum(n, 1) - mean**2, 0.0)
+    se2 = np.where(n > 1, var / np.maximum(n, 1), 0.25)
+    ok = (n > 0) & np.isfinite(target.showdown)
+    z = (mean - np.nan_to_num(target.showdown)) / np.sqrt(SHOWDOWN_TOL**2 + se2)
+    return np.where(ok, z, 0.0)
+
+
+def loss(sim: np.ndarray, target: Target) -> float:
+    return float(np.mean(np.concatenate([feature_z(sim, target), showdown_z(sim, target)]) ** 2))
 
 
 @dataclass
@@ -306,7 +378,7 @@ def spread(result: StyleResult, target: Target, ridge: float = 1e-2) -> np.ndarr
     Fits sim features ≈ A x + b on the samples near the optimum, then maps the real spread
     back through the pseudo-inverse: Σ_x = A⁺ Σ_real A⁺ᵀ (Σ_real diagonal, standardized)."""
     X = np.array(result.samples_x)
-    Y = np.array(result.samples_z)
+    Y = np.array(result.samples_z)[:, : len(target.features)]
     d = np.linalg.norm(X - result.x, axis=1)
     near = d <= np.quantile(d, 0.5)
     Xc = np.column_stack([X[near] - result.x, np.ones(near.sum())])

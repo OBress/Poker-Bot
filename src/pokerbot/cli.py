@@ -120,6 +120,7 @@ def cmd_bots_calibrate(args: argparse.Namespace) -> None:
         hands=args.hands,
         workers=args.workers,
         warm_start=Path(args.warm_start) if args.warm_start else None,
+        real_showdowns=Path(args.real_showdowns) if args.real_showdowns else None,
     )
     print(out)
 
@@ -258,7 +259,7 @@ def cmd_bots_tune_spread(args: argparse.Namespace) -> None:
                              log=log, hands_q=hands_q)  # fmt: skip
         doc = json.loads(bots_path.read_text(encoding="utf-8"))
         for st in doc["formats"][args.format]["styles"]:
-            st["x_scale"] = scales[st["name"]]
+            st["x_scale"] = st.get("x_scale", 1.0) * scales[st["name"]]  # scales are relative
         doc.setdefault("spread_run_id", {})
         if isinstance(doc["spread_run_id"], str):  # bots-v1/v2: one format, one run id
             doc["spread_run_id"] = {"sh": doc["spread_run_id"]}
@@ -368,6 +369,8 @@ def main(argv: list[str] | None = None) -> None:
     cal.add_argument("--hands", type=int, default=4000, help="cap on hands per bot evaluation")
     cal.add_argument("--workers", type=int, default=8)
     cal.add_argument("--warm-start", default=None, help="earlier bots file to start from")
+    cal.add_argument("--real-showdowns", default="data/processed/showdown_ranges.json",
+                     help="real shown-hand tables to match ('' to skip)")  # fmt: skip
     cal.set_defaults(func=cmd_bots_calibrate)
     sdr = bots.add_parser("showdown-real", help="shown-hand strength by line, real players")
     sdr.add_argument("--data", default=HANDHQ_OUT)

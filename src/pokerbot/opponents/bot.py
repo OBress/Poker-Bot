@@ -19,6 +19,9 @@ Postflop
   value_eq            equity above which a hand is played for value
   value_bet           probability of betting a value hand when checked to
   bluff               probability of betting a non-value hand when checked to
+  bluff_eq            (structure 3) only hands below this equity bluff; hands between bluff_eq
+                      and value_eq check, and on the river they never bet (showdown value).
+                      Real shown hands are polarized: river bets are strong, check-downs weak.
   cbet_bonus          extra betting probability as the previous street's aggressor
   donk                multiplier on leading out into the previous aggressor
   bet_size            bet size as a fraction of the pot
@@ -72,6 +75,7 @@ PARAMS: dict[str, tuple[float, float, float]] = {
     "value_eq": (0.35, 0.9, 0.6),
     "value_bet": (0.1, 1.0, 0.75),
     "bluff": (0.0, 0.8, 0.2),
+    "bluff_eq": (0.15, 0.75, 0.45),
     "cbet_bonus": (0.0, 1.0, 0.4),
     "donk": (0.0, 1.5, 0.5),
     "bet_size": (0.25, 1.5, 0.66),
@@ -84,15 +88,22 @@ PARAMS: dict[str, tuple[float, float, float]] = {
     "raise_value": (0.0, 1.0, 0.5),
     "bluff_raise": (0.0, 0.3, 0.04),
     "check_raise": (0.0, 3.0, 1.0),
-    "noise": (0.0, 0.2, 0.02),
+    "noise": (0.0, 0.05, 0.02),
     "buyin": (10.0, 150.0, 100.0),
 }
 
 POSITION_INDEX = {"EP": 0, "MP": 1, "CO": 2, "BTN": 3}
-# Rule-set version. Bots files record the structure they were calibrated with, so a frozen file
-# keeps its behaviour: 2 = bots-v1/v2 (no respect/commit, noise may limp), 3 = current.
+# Rule-set version. Bots files record the structure (and parameter bounds) they were calibrated
+# with, so a frozen file keeps its behaviour: 2 = bots-v1/v2 (no respect/commit/bluff_eq, noise
+# may limp, noise <= 0.2, defend <= 6), 3 = current.
 STRUCTURE = 3
-STRUCTURE_PARAMS = {2: tuple(k for k in PARAMS if k not in ("respect", "commit", "buyin"))}
+STRUCTURE_PARAMS = {
+    2: tuple(k for k in PARAMS if k not in ("respect", "commit", "bluff_eq", "buyin")),
+}
+STRUCTURE_BOUNDS: dict[int, dict[str, tuple[float, float]]] = {
+    2: {k: (v[0], v[1]) for k, v in PARAMS.items()} | {"defend": (0.5, 6.0), "noise": (0.0, 0.2)},
+    3: {k: (v[0], v[1]) for k, v in PARAMS.items()},
+}
 SHOVE_BB = 25
 
 
@@ -276,9 +287,11 @@ class StyleBot:
         u = self.rng.random()
 
         if legal.to_call == 0:
-            prob = p["value_bet"] if eq >= p["value_eq"] else p["bluff"] * (1 - eq)
+            value = eq >= p["value_eq"]
+            medium = self.structure >= 3 and not value and eq >= p["bluff_eq"]
+            prob = p["value_bet"] if value else 0.0 if medium else p["bluff"] * (1 - eq)
             aggressor = _previous_aggressor(state)
-            if aggressor == state.seat:
+            if aggressor == state.seat and not (medium and state.street == Street.RIVER):
                 prob += p["cbet_bonus"] * (1 - prob)
             elif aggressor is not None and not state.folded[aggressor]:
                 order = lambda s: (s - state.button - 1) % state.n_players  # noqa: E731
