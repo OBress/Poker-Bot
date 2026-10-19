@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import numpy as np
 
+from pokerbot.engine.events import Event
 from pokerbot.engine.table import Policy, play_hand
 from pokerbot.stats.hand_stats import hand_counts
 
@@ -23,9 +24,12 @@ def simulate_stats(
     labels: Sequence[str],
     hands: int,
     seed: int,
+    on_hand: Callable[[list[Event]], None] | None = None,
 ) -> dict[str, dict[str, list[int]]]:
     """Play ``hands`` cash-game hands (stacks reset to each bot's buy-in, button rotates) and
-    return summed stat counts per label: {label: {stat: [n, x]}}. Seats sharing a label pool."""
+    return summed stat counts per label: {label: {stat: [n, x]}}. Seats sharing a label pool.
+    ``on_hand`` receives every hand's full event stream (it includes private hole cards, so it is
+    for measurement only, never for a policy)."""
     n = len(seats)
     deck_seeds = np.random.default_rng(seed).integers(0, 2**63 - 1, size=hands)
     stacks = [stack_of(p) for p in seats]
@@ -35,6 +39,8 @@ def simulate_stats(
             seats, stacks, button=h % n, deck_seed=int(deck_seeds[h]),
             small_blind=SMALL_BLIND, big_blind=BIG_BLIND, hand_id=h,
         )  # fmt: skip
+        if on_hand is not None:
+            on_hand(result.events)
         for seat, counts in hand_counts(result.events).items():
             t = totals[labels[seat]]
             for stat, (cn, cx) in counts.items():
