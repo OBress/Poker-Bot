@@ -1,14 +1,19 @@
 """Calibrate StyleBot parameters so each style's simulated stats match the real style.
 
-Loss for a style with target pooled rates t_j and real within-style spread σ_j (logit units):
-    L(θ) = mean_j ((logit ŝ_j(θ) − logit t_j) / σ_j)²
-where ŝ_j are the bot's simulated rates. L ≈ 1 means the bot sits about one typical
-player-to-player difference from the style's center on each stat.
+Bots are measured exactly like real players: each focal bot's stat counts over ``hands`` hands go
+through the profile's ``FeatureTransform`` (Beta-prior shrinkage, logit, standardization) to a
+feature vector z in the style mixture's space. With the style's mean μ_k and spread
+sd_kj = sqrt(Σ_kjj) there, the loss for a candidate is
+    L(θ) = mean_j ((z̄_j(θ) − μ_kj) / sd_kj)²
+where z̄ averages the focal bots' features. L ≈ 1 means the bots sit about one typical
+player-to-player difference from the style's center on each stat. (bots-v1/v2 matched pooled
+rates instead; the mixture mean is what validation compares against, and it includes the same
+shrinkage real players with ~1,000 hands get.)
 
-Calibration is mean-field: a candidate x is the *center* of a style, and is scored by the stats
-of bots sampled around it (with the style's spread) at tables of bots sampled from the whole
-population, exactly as opponents are used later. The focal style takes 2 of 6 seats; all styles
-are calibrated in alternating rounds against the latest population.
+Calibration is mean-field: a candidate x is the *center* of a style, and is scored by bots
+sampled around it (with the style's spread) at tables of bots sampled from the whole population,
+exactly as opponents are used later. Table layouts per format are in ``LAYOUT``; all styles are
+calibrated in alternating rounds against the latest population.
 CMA-ES works in an unbounded space x, mapped to each parameter's bounds by a logistic function.
 Within a generation every candidate faces the same cards (common random numbers).
 """
@@ -23,27 +28,55 @@ from pathlib import Path
 import cma
 import numpy as np
 
-from pokerbot.opponents.bot import PARAMS, StyleBot
+from pokerbot.archetypes.features import FeatureTransform
+from pokerbot.opponents.bot import PARAMS, STRUCTURE, StyleBot
 from pokerbot.opponents.simulate import simulate_stats
 
 CALIBRATED = tuple(k for k in PARAMS if k != "buyin")
-LO = np.array([PARAMS[k][0] for k in CALIBRATED])
-HI = np.array([PARAMS[k][1] for k in CALIBRATED])
 DEPTH_RANGES = ((12.0, 25.0), (25.0, 60.0), (60.0, 150.0), (150.0, 250.0))  # bb, per bucket
-SEATS = 6
-FOCAL_SEATS = (0, 3)
 DEFAULT_SCALE = 0.33  # spread scale before it is measured (tune_scales); typical measured value
+NEW_PARAM_SD = 0.5  # x-space spread given to parameters a warm start doesn't have
 
 
-def to_params(x: np.ndarray) -> dict[str, float]:
-    theta = LO + (HI - LO) / (1 + np.exp(-np.asarray(x)))
-    return dict(zip(CALIBRATED, theta.tolist(), strict=True))
+@dataclass(frozen=True)
+class Layout:
+    seats: int  # players dealt
+    focal: tuple[int, ...]  # seats taken by the style being calibrated
+    tables: int  # independent tables per evaluation
 
 
-def to_x(params: dict[str, float]) -> np.ndarray:
-    theta = np.array([params[k] for k in CALIBRATED])
-    u = np.clip((theta - LO) / (HI - LO), 1e-3, 1 - 1e-3)
+LAYOUT = {
+    "hu": Layout(2, (0,), 2),
+    "sh": Layout(6, (0, 3), 1),
+    "fr": Layout(9, (0, 3, 6), 1),
+}
+
+
+def _bounds(names: tuple[str, ...]) -> tuple[np.ndarray, np.ndarray]:
+    return np.array([PARAMS[k][0] for k in names]), np.array([PARAMS[k][1] for k in names])
+
+
+def to_params(x: np.ndarray, names: tuple[str, ...] = CALIBRATED) -> dict[str, float]:
+    lo, hi = _bounds(names)
+    theta = lo + (hi - lo) / (1 + np.exp(-np.asarray(x)))
+    return dict(zip(names, theta.tolist(), strict=True))
+
+
+def to_x(params: dict[str, float], names: tuple[str, ...] = CALIBRATED) -> np.ndarray:
+    lo, hi = _bounds(names)
+    theta = np.array([params.get(k, PARAMS[k][2]) for k in names])
+    u = np.clip((theta - lo) / (hi - lo), 1e-3, 1 - 1e-3)
     return np.log(u / (1 - u))
+
+
+def draw_hands(quantiles: np.ndarray, rng: np.random.Generator, cap: int) -> tuple[int, float]:
+    """A real player's hand count, drawn from the format's percentiles, as (hands to simulate,
+    count scale). Above ``cap`` the bot plays ``cap`` hands and its counts are scaled up, which
+    keeps the Beta-prior shrinkage of a long-sample player (only the sampling noise is smaller)."""
+    h = float(np.interp(rng.uniform(0, 100), np.arange(len(quantiles)), quantiles))
+    if h <= cap:
+        return int(round(h)), 1.0
+    return cap, h / cap
 
 
 def sample_buyin(depth: np.ndarray, rng: np.random.Generator) -> float:
@@ -55,29 +88,33 @@ def sample_buyin(depth: np.ndarray, rng: np.random.Generator) -> float:
 class Target:
     index: int
     name: str
-    features: tuple[str, ...]
-    rate: np.ndarray  # pooled real rates
-    sigma: np.ndarray  # within-style spread of logit rates
+    transform: FeatureTransform
+    mean: np.ndarray  # style center μ_k (standardized features)
+    sd: np.ndarray  # within-style spread sqrt(diag Σ_k) (standardized features)
+    rate: np.ndarray  # pooled real rates (starting point and reports)
     depth: np.ndarray  # stack-depth bucket shares
     share: float
+
+    @property
+    def features(self) -> tuple[str, ...]:
+        return self.transform.features
 
 
 def make_targets(fmt_profile: dict, depth: np.ndarray) -> list[Target]:
     t = fmt_profile["transform"]
-    out = []
-    for s in fmt_profile["styles"]:
-        out.append(
-            Target(
-                index=s["index"],
-                name=s["name"],
-                features=t.features,
-                rate=np.array([s["pooled_rate"][f] for f in t.features]),
-                sigma=np.sqrt(np.diag(s["cov"])) * t.std,
-                depth=depth[s["index"]],
-                share=s["share"],
-            )
+    return [
+        Target(
+            index=s["index"],
+            name=s["name"],
+            transform=t,
+            mean=np.array(s["mean"]),
+            sd=np.sqrt(np.diag(s["cov"])),
+            rate=np.array([s["pooled_rate"][f] for f in t.features]),
+            depth=depth[s["index"]],
+            share=s["share"],
         )
-    return out
+        for s in fmt_profile["styles"]
+    ]
 
 
 def init_params(rate: dict[str, float]) -> dict[str, float]:
@@ -127,32 +164,40 @@ def make_bot(
     return StyleBot({**params, "buyin": sample_buyin(depth, rng)}, int(rng.integers(2**31)))
 
 
-def simulate_rates(
+def simulate_features(
     params: dict[str, float],
     target: Target,
     pop: Population,
     seed: int,
     hands: int,
     focal_noise: np.ndarray | None = None,
+    layout: Layout = LAYOUT["sh"],
+    hands_q: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Focal style's simulated rates for the target's features (smoothed so logit is finite).
+    """Mean standardized feature vector of the focal bots, each measured over ``hands`` hands,
+    or, with ``hands_q`` (percentiles of real players' hand counts), over a hand count drawn per
+    table from it with ``hands`` as the cap (``draw_hands``).
     With ``focal_noise``, each focal seat is a different bot sampled around ``params``."""
     rng = np.random.default_rng(seed)
-    others = pop.bots(rng, SEATS - len(FOCAL_SEATS))
-    seats, labels = [], []
-    for s in range(SEATS):
-        if s in FOCAL_SEATS:
-            seats.append(make_bot(params, focal_noise, target.depth, rng))
-            labels.append("focal")
-        else:
-            seats.append(others.pop())
-            labels.append("other")
-    counts = simulate_stats(seats, labels, hands, int(rng.integers(2**31)))["focal"]
-    out = []
-    for f in target.features:
-        n, x = counts.get(f, (0, 0))
-        out.append((x + 0.5) / (n + 1.0))
-    return np.array(out)
+    zs = []
+    for _ in range(layout.tables):
+        sim_hands, scale = (hands, 1.0) if hands_q is None else draw_hands(hands_q, rng, hands)
+        others = pop.bots(rng, layout.seats - len(layout.focal))
+        seats, labels = [], []
+        for s in range(layout.seats):
+            if s in layout.focal:
+                seats.append(make_bot(params, focal_noise, target.depth, rng))
+                labels.append(f"focal{s}")
+            else:
+                seats.append(others.pop())
+                labels.append("other")
+        counts = simulate_stats(seats, labels, sim_hands, int(rng.integers(2**31)))
+        for s in layout.focal:
+            c = counts[f"focal{s}"]
+            n = scale * np.array([[c.get(f, (0, 0))[0] for f in target.features]], dtype=float)
+            x = scale * np.array([[c.get(f, (0, 0))[1] for f in target.features]], dtype=float)
+            zs.append(target.transform.transform(n, x)[0][0])
+    return np.mean(zs, axis=0)
 
 
 def logit(r: np.ndarray) -> np.ndarray:
@@ -160,8 +205,13 @@ def logit(r: np.ndarray) -> np.ndarray:
     return np.log(r / (1 - r))
 
 
-def loss(sim: np.ndarray, target: Target) -> float:
-    return float(np.mean(((logit(sim) - logit(target.rate)) / target.sigma) ** 2))
+def feature_z(z: np.ndarray, target: Target) -> np.ndarray:
+    """Per-stat distance of simulated features from the style center, in style σ."""
+    return (z - target.mean) / target.sd
+
+
+def loss(z: np.ndarray, target: Target) -> float:
+    return float(np.mean(feature_z(z, target) ** 2))
 
 
 @dataclass
@@ -171,7 +221,7 @@ class StyleResult:
     loss: float
     history: list[dict] = field(default_factory=list)  # per generation
     samples_x: list[list[float]] = field(default_factory=list)
-    samples_logit: list[list[float]] = field(default_factory=list)
+    samples_z: list[list[float]] = field(default_factory=list)
 
 
 def calibrate_style(
@@ -184,6 +234,8 @@ def calibrate_style(
     seed: int,
     focal_noise: np.ndarray | None = None,
     sigma0: float = 0.6,
+    layout: Layout = LAYOUT["sh"],
+    hands_q: np.ndarray | None = None,
 ) -> StyleResult:
     es = cma.CMAEvolutionStrategy(
         x0, sigma0, {"popsize": popsize, "seed": seed + 1, "maxiter": iters, "verbose": -9}
@@ -193,21 +245,55 @@ def calibrate_style(
     while not es.stop():
         xs = es.ask()
         gen_seed = seed * 10_000 + gen  # common random numbers within a generation
-        sims = [simulate_rates(to_params(x), target, pop, gen_seed, hands, focal_noise) for x in xs]
+        sims = [
+            simulate_features(
+                to_params(x), target, pop, gen_seed, hands, focal_noise, layout, hands_q
+            )
+            for x in xs
+        ]
         losses = [loss(s, target) for s in sims]
         es.tell(xs, losses)
         result.samples_x += [list(map(float, x)) for x in xs]
-        result.samples_logit += [logit(s).tolist() for s in sims]
+        result.samples_z += [s.tolist() for s in sims]
         result.history.append(
             {"gen": gen, "best": min(losses), "mean": float(np.mean(losses)), "sigma": es.sigma}
         )
         gen += 1
     result.x = np.asarray(es.result.xfavorite)  # distribution mean: robust to evaluation noise
-    final = simulate_rates(
-        to_params(result.x), target, pop, seed * 10_000 + 9_999, hands * 3, focal_noise
-    )
+    final = final_features(result.x, target, pop, seed, hands, focal_noise, layout, hands_q)
     result.loss = loss(final, target)
     return result
+
+
+def final_features(
+    x: np.ndarray,
+    target: Target,
+    pop: Population,
+    seed: int,
+    hands: int,
+    focal_noise: np.ndarray | None,
+    layout: Layout,
+    hands_q: np.ndarray | None = None,
+    repeats: int = 4,
+) -> np.ndarray:
+    """Features averaged over several fresh tables (same hand-count rule: shrinkage depends on
+    it, so more hands per bot would not be the same measurement)."""
+    return np.mean(
+        [
+            simulate_features(
+                to_params(x),
+                target,
+                pop,
+                seed * 10_000 + 9_000 + r,
+                hands,
+                focal_noise,
+                layout,
+                hands_q,
+            )
+            for r in range(repeats)
+        ],
+        axis=0,
+    )
 
 
 def _run(args) -> StyleResult:
@@ -217,18 +303,29 @@ def _run(args) -> StyleResult:
 def spread(result: StyleResult, target: Target, ridge: float = 1e-2) -> np.ndarray:
     """Parameter covariance (in x space) that reproduces the real within-style spread.
 
-    Fits sim logit rates ≈ A x + b on the samples near the optimum, then maps the real spread
-    back through the pseudo-inverse: Σ_x = A⁺ Σ_real A⁺ᵀ (Σ_real diagonal in logit units)."""
+    Fits sim features ≈ A x + b on the samples near the optimum, then maps the real spread
+    back through the pseudo-inverse: Σ_x = A⁺ Σ_real A⁺ᵀ (Σ_real diagonal, standardized)."""
     X = np.array(result.samples_x)
-    Y = np.array(result.samples_logit)
+    Y = np.array(result.samples_z)
     d = np.linalg.norm(X - result.x, axis=1)
     near = d <= np.quantile(d, 0.5)
     Xc = np.column_stack([X[near] - result.x, np.ones(near.sum())])
     coef, *_ = np.linalg.lstsq(Xc, Y[near], rcond=None)
     A = coef[:-1].T  # (features, params)
     pinv = np.linalg.pinv(A, rcond=1e-2)
-    cov = pinv @ np.diag(target.sigma**2) @ pinv.T
+    cov = pinv @ np.diag(target.sd**2) @ pinv.T
     return cov + ridge * np.eye(len(CALIBRATED))
+
+
+def warm_style(style: dict, names: tuple[str, ...]) -> tuple[np.ndarray, np.ndarray]:
+    """(x_mean, x_cov) of an earlier bots file's style in the current parameter space.
+    Parameters it lacks start at their defaults with an independent spread of NEW_PARAM_SD."""
+    params = {**{k: PARAMS[k][2] for k in CALIBRATED}, **style["params"]}
+    x = to_x(params)
+    cov = np.diag(np.full(len(CALIBRATED), NEW_PARAM_SD**2))
+    idx = [CALIBRATED.index(k) for k in names]
+    cov[np.ix_(idx, idx)] = np.array(style["x_cov"])
+    return x, cov
 
 
 def calibrate_format(
@@ -241,22 +338,27 @@ def calibrate_format(
     seed: int,
     log=None,
     warm: list[dict] | None = None,
+    warm_names: tuple[str, ...] = CALIBRATED,
+    layout: Layout = LAYOUT["sh"],
+    hands_q: np.ndarray | None = None,
 ) -> tuple[list[StyleResult], Population]:
-    """``warm``: styles from an earlier bots file (x_mean, x_cov, x_scale) to start from; their
-    spread is used from round 0. Without it, round 0 calibrates centers with no spread."""
+    """``warm``: styles from an earlier bots file (params, x_cov, x_scale; ``warm_names`` its
+    calibrated parameters) to start from; their spread is used from round 0. Without it, round 0
+    calibrates centers with no spread."""
     depth = [t.depth for t in targets]
     share = np.array([t.share for t in targets])
     if warm:
-        params = [to_params(np.array(w["x_mean"])) for w in warm]
+        starts = [warm_style(w, warm_names) for w in warm]
+        params = [to_params(x) for x, _ in starts]
         scales = [w.get("x_scale") or DEFAULT_SCALE for w in warm]
-        noise = [_noise(np.array(w["x_cov"]), sc) for w, sc in zip(warm, scales, strict=True)]
+        noise = [_noise(cov, sc) for (_, cov), sc in zip(starts, scales, strict=True)]
         sigma0 = 0.3
     else:
         params = [init_params(dict(zip(t.features, t.rate.tolist(), strict=True))) for t in targets]
         scales = [DEFAULT_SCALE] * len(targets)
         noise = [None] * len(targets)
         sigma0 = 0.6
-    pop = Population(params, depth, share, noise)
+    pop = Population(params, depth, share, noise, scales)
     results: list[StyleResult] = []
     for r in range(rounds):
         jobs = [
@@ -270,6 +372,8 @@ def calibrate_format(
                 seed + 97 * r + i,
                 noise[i],
                 sigma0,
+                layout,
+                hands_q,
             )
             for i, t in enumerate(targets)
         ]
@@ -279,8 +383,7 @@ def calibrate_format(
             _noise(spread(res, t), scales[i])
             for i, (res, t) in enumerate(zip(results, targets, strict=True))
         ]
-        pop = Population([to_params(res.x) for res in results], depth, share, noise)
-        pop.scales = scales
+        pop = Population([to_params(res.x) for res in results], depth, share, noise, scales)
         if log:
             log(r, results)
     return results, pop
@@ -291,8 +394,14 @@ def _noise(cov: np.ndarray, scale: float) -> np.ndarray:
 
 
 def write_bots(path: Path, version: str, run_id: str, formats: dict[str, dict]) -> None:
+    """Write a bots file. If ``path`` already holds the same version and structure (formats
+    calibrated by separate runs), the new formats are merged in; each format records its run."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps({"version": version, "run_id": run_id, "formats": formats}, indent=1),
-        encoding="utf-8",
-    )
+    doc = {"version": version, "structure": STRUCTURE, "formats": {}}
+    if path.exists():
+        old = json.loads(path.read_text(encoding="utf-8"))
+        if old.get("version") == version and old.get("structure") == STRUCTURE:
+            doc = old
+    doc["formats"].update({f: {**d, "run_id": run_id} for f, d in formats.items()})
+    doc["run_id"] = {f: d["run_id"] for f, d in doc["formats"].items()}
+    path.write_text(json.dumps(doc, indent=1), encoding="utf-8")

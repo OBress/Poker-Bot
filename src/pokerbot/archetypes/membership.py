@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import polars as pl
 from sklearn.mixture import GaussianMixture
@@ -47,3 +49,25 @@ def depth_shares(fmt_profile: dict, stats: pl.DataFrame, fmt: str) -> np.ndarray
     ).astype(float)
     shares = q.T @ d  # (K, 4) membership-weighted hand counts
     return shares / np.maximum(shares.sum(axis=1, keepdims=True), 1e-9)
+
+
+def format_stats(stats_path: Path, fmt: str, features: tuple[str, ...]) -> pl.DataFrame:
+    """The rows of the per-player stats table that membership, depth and hand counts need for one
+    format (the full table is several GB in memory; this is a small slice of it)."""
+    keep = [*features, "hands", *(f"vpip_d{i}" for i in range(len(DEPTH_EDGES) + 1))]
+    return (
+        pl.scan_parquet(stats_path)
+        .filter(pl.col("pid").str.ends_with(f":{fmt}") & pl.col("stat").is_in(keep))
+        .select("pid", "stat", "n", "x")
+        .collect()
+    )
+
+
+def hand_quantiles(stats: pl.DataFrame, fmt: str, min_hands: int = 500) -> np.ndarray:
+    """Percentiles 0..100 of hands per profiled player (units with >= min_hands) in a format."""
+    h = stats.filter(
+        pl.col("pid").str.ends_with(f":{fmt}")
+        & (pl.col("stat") == "hands")
+        & (pl.col("n") >= min_hands)
+    )["n"].to_numpy()
+    return np.percentile(h, np.arange(101))

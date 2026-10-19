@@ -27,12 +27,20 @@ Postflop
                       facing a bet, so the base requirement is substantial. late_call_base
                       replaces call_base on the turn and river (players who called the flop
                       are stickier later: real fold-to-c-bet ~50% flop vs ~35% turn).
+  respect             extra equity needed to call a c-bet (the first bet of a street, made by the
+                      previous street's aggressor). Real players fold more to a raiser's c-bet
+                      than to a stab, which one call threshold can't express.
+  commit              pot commitment: if calling would leave at most commit x (pot after the
+                      call) behind, the bot calls whenever its equity beats the pot odds
+                      (short stacks get it in instead of folding the turn).
   raise_eq            equity above which the bot raises facing a bet (with prob raise_value)
   raise_value         probability of raising a raise_eq hand instead of calling
   bluff_raise         probability of raising a hand that would otherwise fold
   check_raise         multiplier on raising after having checked this street
 Other
-  noise               probability of replacing the decision with a random legal action
+  noise               probability of replacing the decision with a random legal action. In an
+                      unopened preflop pot the random action is fold or raise, never a limp:
+                      limping is set by limp_width alone.
   buyin               stack in big blinds the bot sits with; not calibrated, sampled per seat from
                       the style's real stack-depth distribution. At <= 25 bb raises become shoves.
 """
@@ -57,7 +65,7 @@ PARAMS: dict[str, tuple[float, float, float]] = {
     "limp_width": (0.0, 0.6, 0.02),
     "three_bet": (0.0, 0.25, 0.05),
     "call_width": (0.0, 0.5, 0.08),
-    "defend": (0.5, 6.0, 1.3),
+    "defend": (0.5, 10.0, 1.3),
     "cont_vs_3bet": (0.05, 1.0, 0.45),
     "four_bet": (0.0, 0.5, 0.12),
     "open_size": (2.0, 5.0, 3.0),
@@ -70,6 +78,8 @@ PARAMS: dict[str, tuple[float, float, float]] = {
     "call_base": (0.0, 0.7, 0.35),
     "late_call_base": (0.0, 0.7, 0.35),
     "call_strict": (0.0, 2.5, 1.0),
+    "respect": (0.0, 0.3, 0.03),
+    "commit": (0.0, 1.5, 0.3),
     "raise_eq": (0.5, 0.98, 0.8),
     "raise_value": (0.0, 1.0, 0.5),
     "bluff_raise": (0.0, 0.3, 0.04),
@@ -79,6 +89,10 @@ PARAMS: dict[str, tuple[float, float, float]] = {
 }
 
 POSITION_INDEX = {"EP": 0, "MP": 1, "CO": 2, "BTN": 3}
+# Rule-set version. Bots files record the structure they were calibrated with, so a frozen file
+# keeps its behaviour: 2 = bots-v1/v2 (no respect/commit, noise may limp), 3 = current.
+STRUCTURE = 3
+STRUCTURE_PARAMS = {2: tuple(k for k in PARAMS if k not in ("respect", "commit", "buyin"))}
 SHOVE_BB = 25
 
 
@@ -132,9 +146,14 @@ class StyleBot:
     """Rule-based player with style parameters. Deterministic given its RNG seed."""
 
     def __init__(
-        self, params: dict[str, float], seed: int | np.random.Generator, name: str = ""
+        self,
+        params: dict[str, float],
+        seed: int | np.random.Generator,
+        name: str = "",
+        structure: int = STRUCTURE,
     ) -> None:
         self.p = {**default_params(), **params}
+        self.structure = structure
         self.rng = seed if isinstance(seed, np.random.Generator) else np.random.default_rng(seed)
         self.name = name
 
@@ -167,8 +186,10 @@ class StyleBot:
 
     def _random_action(self, state: DecisionState) -> Action:
         u = self.rng.random()
-        if u < 0.33:
-            return self._fold_or_check(state)
+        unopened = state.street == Street.PREFLOP and _preflop_context(state).raises == 0
+        no_limp = self.structure >= 3 and unopened and state.legal.to_call > 0
+        if u < 0.33 or (u < 0.66 and no_limp):
+            return self._fold_or_check(state)  # no random limps
         if u < 0.66 or not state.legal.can_raise:
             return Action.check_call()
         return self._raise(state, state.legal.min_raise_to)
@@ -271,7 +292,15 @@ class StyleBot:
         pot_after_call = state.pot + legal.to_call
         pot_odds = legal.to_call / pot_after_call
         base = p["call_base"] if state.street == Street.FLOP else p["late_call_base"]
+        if self.structure >= 3:
+            aggressor = _previous_aggressor(state)
+            bets = [a for a in this_street if a.type == ActionType.BET_RAISE]
+            if len(bets) == 1 and bets[0].seat == aggressor:  # facing a c-bet
+                base += p["respect"]
         need = min(0.95, base + pot_odds * p["call_strict"])
+        behind = state.stacks[state.seat] - legal.to_call
+        if self.structure >= 3 and behind <= p["commit"] * pot_after_call:
+            need = min(need, pot_odds)  # pot-committed: pot odds alone decide
         raise_mult = p["check_raise"] if checked_before else 1.0
         current = max(state.bets)
         raise_to = current + p["bet_size"] * (state.pot + legal.to_call)

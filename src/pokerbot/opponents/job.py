@@ -6,16 +6,17 @@ import json
 from pathlib import Path
 
 import numpy as np
-import polars as pl
 
-from pokerbot.archetypes.membership import depth_shares
+from pokerbot.archetypes.membership import depth_shares, format_stats, hand_quantiles
 from pokerbot.archetypes.profiles import load_profiles
+from pokerbot.opponents.bot import STRUCTURE, STRUCTURE_PARAMS
 from pokerbot.opponents.calibrate import (
     CALIBRATED,
+    LAYOUT,
     calibrate_format,
-    logit,
+    feature_z,
+    final_features,
     make_targets,
-    simulate_rates,
     spread,
     to_params,
     write_bots,
@@ -32,7 +33,7 @@ def run_calibration(
     rounds: int = 2,
     iters: int = 30,
     popsize: int = 14,
-    hands: int = 1000,
+    hands: int = 4000,
     workers: int = 8,
     seed: int = 0,
     warm_start: Path | None = None,
@@ -40,6 +41,7 @@ def run_calibration(
     config = dict(
         profiles=str(profiles_path), formats=list(formats), rounds=rounds, iters=iters,
         popsize=popsize, hands=hands, workers=workers, calibrated=list(CALIBRATED),
+        structure=STRUCTURE, layouts={f: vars(LAYOUT[f]) for f in formats},
         warm_start=str(warm_start) if warm_start else None,
     )  # fmt: skip
     with Run.start(
@@ -47,11 +49,13 @@ def run_calibration(
         data={"profiles": profiles_path, "player_stats": stats_path},
     ) as run:  # fmt: skip
         profiles = load_profiles(profiles_path)
-        stats = pl.read_parquet(stats_path, columns=["pid", "stat", "n", "x"])
         out: dict[str, dict] = {}
         for fmt in formats:
             prof = profiles["formats"][fmt]
+            stats = format_stats(stats_path, fmt, prof["transform"].features)
             depth = depth_shares(prof, stats, fmt)
+            hands_q = hand_quantiles(stats, fmt)
+            del stats
             targets = make_targets(prof, depth)
 
             def log(r, results, fmt=fmt, targets=targets):
@@ -71,21 +75,26 @@ def run_calibration(
                     f"{targets[res.index].name}={res.loss:.2f}" for res in results
                 ), flush=True)  # fmt: skip
 
-            warm = None
+            warm, warm_names = None, CALIBRATED
             if warm_start:
                 warm_doc = json.loads(Path(warm_start).read_text(encoding="utf-8"))
-                warm = warm_doc["formats"][fmt]["styles"]
-                if [w["name"] for w in warm] != [t.name for t in targets]:
-                    raise ValueError("warm-start styles don't match the profiles")
+                if fmt in warm_doc["formats"]:
+                    warm = warm_doc["formats"][fmt]["styles"]
+                    default = STRUCTURE_PARAMS.get(warm_doc.get("structure", 2), CALIBRATED)
+                    warm_names = tuple(warm_doc["formats"][fmt].get("calibrated", default))
+                    if [w["name"] for w in warm] != [t.name for t in targets]:
+                        raise ValueError("warm-start styles don't match the profiles")
+            layout = LAYOUT[fmt]
             results, pop = calibrate_format(
-                targets, rounds, iters, popsize, hands, workers, seed, log, warm=warm
-            )
+                targets, rounds, iters, popsize, hands, workers, seed, log, warm=warm,
+                warm_names=warm_names, layout=layout, hands_q=hands_q,
+            )  # fmt: skip
             styles = []
             for res, t in zip(results, targets, strict=True):
-                final = simulate_rates(
-                    to_params(res.x), t, pop, seed + 12345, hands * 4, pop.noise[t.index]
+                final = final_features(
+                    res.x, t, pop, seed + 12345, hands, pop.noise[t.index], layout, hands_q, 6
                 )
-                z = (logit(final) - logit(t.rate)) / t.sigma
+                z = feature_z(final, t)
                 styles.append(
                     {
                         "index": t.index,
@@ -99,8 +108,9 @@ def run_calibration(
                         "loss": res.loss,
                         "check": {
                             f: {
-                                "target": float(t.rate[j]),
-                                "sim": float(final[j]),
+                                "target_rate": float(t.rate[j]),
+                                "target_feature": float(t.mean[j]),
+                                "sim_feature": float(final[j]),
                                 "z": float(z[j]),
                             }
                             for j, f in enumerate(t.features)
@@ -108,7 +118,13 @@ def run_calibration(
                     }
                 )
                 run.log_metric(f"{fmt}/{t.name}/check_max_abs_z", float(np.abs(z).max()))
-            out[fmt] = {"calibrated": list(CALIBRATED), "styles": styles}
+            out[fmt] = {
+                "calibrated": list(CALIBRATED),
+                "layout": vars(layout),
+                "hands_cap": hands,
+                "member_hands_percentiles": hands_q.tolist(),
+                "styles": styles,
+            }
         write_bots(out_path, version, run.dir.name, out)
         run.save_artifact(out_path.name, out_path)
     return out_path

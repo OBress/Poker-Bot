@@ -18,8 +18,8 @@ from pathlib import Path
 
 import numpy as np
 
-from pokerbot.opponents.bot import StyleBot
-from pokerbot.opponents.calibrate import sample_buyin, to_params
+from pokerbot.opponents.bot import STRUCTURE_PARAMS, StyleBot
+from pokerbot.opponents.calibrate import CALIBRATED, sample_buyin, to_params
 
 
 @dataclass(frozen=True)
@@ -33,6 +33,9 @@ class StyleSampler:
     def __init__(self, bots_path: Path, fmt: str = "sh", spread: float = 1.0) -> None:
         doc = json.loads(Path(bots_path).read_text(encoding="utf-8"))
         self.version = doc["version"]
+        self.structure = int(doc.get("structure", 2))  # bots-v1/v2 predate the field
+        default = STRUCTURE_PARAMS.get(self.structure, CALIBRATED)
+        self.calibrated = tuple(doc["formats"][fmt].get("calibrated", default))
         self.styles = doc["formats"][fmt]["styles"]
         self.share = np.array([s["share"] for s in self.styles])
         self.share = self.share / self.share.sum()
@@ -51,8 +54,9 @@ class StyleSampler:
         s = self.styles[k]
         scale = self.spread * s.get("x_scale", 1.0)
         x = np.array(s["x_mean"]) + scale * self._chol[k] @ rng.standard_normal(len(s["x_mean"]))
-        params = {**to_params(x), "buyin": sample_buyin(np.array(s["depth"]), rng)}
-        return SeatDraw(StyleBot(params, int(rng.integers(2**63)), s["name"]), k, s["name"])
+        params = {**to_params(x, self.calibrated), "buyin": sample_buyin(np.array(s["depth"]), rng)}
+        bot = StyleBot(params, int(rng.integers(2**63)), s["name"], self.structure)
+        return SeatDraw(bot, k, s["name"])
 
     def table(self, rng: np.random.Generator, seats: int) -> list[SeatDraw]:
         return [self.draw(rng) for _ in range(seats)]
