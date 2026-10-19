@@ -59,7 +59,13 @@ def _jsonable(x: Any) -> Any:
 def _git(*args: str) -> str:
     try:
         return subprocess.run(
-            ["git", *args], capture_output=True, text=True, check=True, timeout=20
+            ["git", *args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",  # diffs contain non-ASCII; the Windows default codec fails on them
+            errors="replace",
+            check=True,
+            timeout=20,
         ).stdout
     except (OSError, subprocess.SubprocessError):
         return ""

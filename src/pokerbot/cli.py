@@ -103,6 +103,172 @@ def cmd_styles_report(args: argparse.Namespace) -> None:
     print(args.out)
 
 
+def cmd_bots_calibrate(args: argparse.Namespace) -> None:
+    from pathlib import Path
+
+    from pokerbot.opponents.job import run_calibration
+
+    out = run_calibration(
+        Path(args.profiles),
+        Path(args.stats),
+        Path(args.out or f"profiles/bots-{args.version}.json"),
+        args.version,
+        formats=tuple(args.format),
+        rounds=args.rounds,
+        iters=args.iters,
+        popsize=args.popsize,
+        hands=args.hands,
+        workers=args.workers,
+        warm_start=Path(args.warm_start) if args.warm_start else None,
+        real_showdowns=Path(args.real_showdowns) if args.real_showdowns else None,
+    )
+    print(out)
+
+
+def cmd_bots_showdown_real(args: argparse.Namespace) -> None:
+    import json
+    import time
+    from pathlib import Path
+
+    from pokerbot.opponents.showdown import real_tables
+    from pokerbot.track import Run
+
+    start = time.perf_counter()
+    config = {k: v for k, v in vars(args).items() if k != "func"}
+    with Run.start(
+        "showdown-ranges", kind="data", config=config,
+        data={"hands": Path(args.data), "profiles": Path(args.profiles),
+              "player_stats": Path(args.stats)},
+    ) as run:  # fmt: skip
+
+        def log(done, total, info):
+            print(f"{done}/{total} chunks, " + ", ".join(f"{k} {v:,}" for k, v in info.items()),
+                  flush=True)  # fmt: skip
+
+        doc = real_tables(
+            Path(args.data), Path(args.profiles), Path(args.stats), tuple(args.format),
+            workers=args.workers, limit_files=args.limit_files, log=log,
+            parts_dir=Path(args.out).with_name(Path(args.out).stem + "_parts"),
+        )  # fmt: skip
+        doc["run_id"] = run.dir.name
+        out = Path(args.out)
+        out.write_text(json.dumps(doc), encoding="utf-8")
+        run.save_artifact(out.name, out)
+        for fmt, d in doc["formats"].items():
+            for name, counts in zip(d["styles"], d["counts"], strict=True):
+                run.log_metric(f"{fmt}/{name}/shown_weight", float(sum(map(sum, counts))),
+                               style=name)  # fmt: skip
+        players = {fmt: d["members"] for fmt, d in doc["formats"].items()}
+        run.finish(**doc["info"], players=players, seconds=time.perf_counter() - start)
+    print(out)
+
+
+def cmd_bots_validate(args: argparse.Namespace) -> None:
+    from pathlib import Path
+
+    from pokerbot.archetypes.membership import format_stats, hand_quantiles
+    from pokerbot.archetypes.profiles import load_profiles
+    from pokerbot.opponents.validate import validate
+    from pokerbot.track import Run
+
+    real = Path(args.real_showdowns) if args.real_showdowns else None
+    features = load_profiles(Path(args.profiles))["formats"][args.format]["transform"].features
+    hands_q = hand_quantiles(format_stats(Path(args.stats), args.format, features), args.format)
+    data = {"bots": Path(args.bots), "profiles": Path(args.profiles), "stats": Path(args.stats)}
+    if real and real.exists():
+        data["real_showdowns"] = real
+    with Run.start(
+        f"bots-validate-{Path(args.bots).stem}-{args.format}", kind="eval",
+        config=vars(args) | {"func": None}, data=data,
+    ) as run:  # fmt: skip
+        report = validate(
+            Path(args.bots), Path(args.profiles), args.format, workers=args.workers,
+            hands=args.hands, real_showdowns=real, hands_q=hands_q,
+        )  # fmt: skip
+        run.save_artifact("validation.json", report)
+        for name, r in report["styles"].items():
+            run.log_metrics(
+                {f"{name}/max_abs_center_z": r["max_abs_center_z"],
+                 f"{name}/within_spread": r["within_spread"],
+                 f"{name}/median_spread_ratio": r["median_spread_ratio"]}, style=name,
+            )  # fmt: skip
+            worst = sorted(r["stats"].items(), key=lambda kv: -abs(kv[1]["center_z"]))[:3]
+            detail = ", ".join(f"{f} z={v['center_z']:+.2f}" for f, v in worst)
+            print(
+                f"{name:26s} {r['within_spread']}/{r['features']} within 1 sd, "
+                f"{r['within_2']} within 2 (legacy {r['legacy_within_spread']}); "
+                f"spread {r['median_spread_ratio']:.2f}; worst: {detail}"
+            )
+        sm = report["summary"]
+        run.log_metrics(
+            {"pairs_within_1": sm["within_spread"], "pairs_within_2": sm["within_2"],
+             "pairs_legacy_within_1": sm["legacy_within_spread"]}
+        )  # fmt: skip
+        print(
+            f"{report['format']}: {sm['within_spread']}/{sm['pairs']} style-stat pairs within 1 sd "
+            f"({sm['within_spread'] / sm['pairs']:.0%}), {sm['within_2']} within 2 sd; legacy "
+            f"yardstick {sm['legacy_within_spread']}/{sm['pairs']}"
+        )
+        if "showdowns" in report:
+            print("\nshown-hand strength by line (real/sim mean equity, z, TV of buckets):")
+            for name, r in report["showdowns"].items():
+                run.log_metrics(
+                    {f"{name}/sd_lines_tested": r["lines_tested"],
+                     f"{name}/sd_lines_within_2se": r["lines_equity_within_2se"],
+                     f"{name}/sd_line_share_tv": r["line_share_tv"]}, style=name,
+                )  # fmt: skip
+                cells = []
+                for line, c in r["lines"].items():
+                    if "equity_z" in c:
+                        cells.append(
+                            f"{line} {c['real_equity']:.2f}/{c['sim_equity']:.2f} "
+                            f"z={c['equity_z']:+.1f} tv={c['tv']:.2f}"
+                        )
+                print(
+                    f"{name:26s} {r['lines_equity_within_2se']}/{r['lines_tested']} lines within "
+                    f"2 se; line-mix TV {r['line_share_tv']:.2f}\n    " + "\n    ".join(cells)
+                )
+        elif real:
+            print(f"(no real showdown tables at {real}: run `pokerbot bots showdown-real`)")
+
+
+def cmd_bots_tune_spread(args: argparse.Namespace) -> None:
+    import json
+    from pathlib import Path
+
+    from pokerbot.archetypes.membership import format_stats, hand_quantiles
+    from pokerbot.archetypes.profiles import load_profiles
+    from pokerbot.opponents.validate import tune_scales
+    from pokerbot.track import Run
+
+    bots_path = Path(args.bots)
+    features = load_profiles(Path(args.profiles))["formats"][args.format]["transform"].features
+    hands_q = hand_quantiles(format_stats(Path(args.stats), args.format, features), args.format)
+    with Run.start(
+        f"bots-spread-{bots_path.stem}-{args.format}", kind="calibrate",
+        config=vars(args) | {"func": None},
+        data={"bots": bots_path, "profiles": Path(args.profiles)},
+    ) as run:  # fmt: skip
+
+        def log(scale, name, r):
+            run.log_metric(f"{name}/median_spread_ratio", r["median_spread_ratio"], style=name,
+                           scale=scale)  # fmt: skip
+            print(f"scale {scale:.2f} {name:26s} spread ratio {r['median_spread_ratio']:.2f}")
+
+        scales = tune_scales(bots_path, Path(args.profiles), args.format, workers=args.workers,
+                             log=log, hands_q=hands_q)  # fmt: skip
+        doc = json.loads(bots_path.read_text(encoding="utf-8"))
+        for st in doc["formats"][args.format]["styles"]:
+            st["x_scale"] = st.get("x_scale", 1.0) * scales[st["name"]]  # scales are relative
+        doc.setdefault("spread_run_id", {})
+        if isinstance(doc["spread_run_id"], str):  # bots-v1/v2: one format, one run id
+            doc["spread_run_id"] = {"sh": doc["spread_run_id"]}
+        doc["spread_run_id"][args.format] = run.dir.name
+        bots_path.write_text(json.dumps(doc, indent=1), encoding="utf-8")
+        run.save_artifact("scales.json", scales)
+        print({k: round(v, 3) for k, v in scales.items()})
+
+
 def cmd_runs_list(args: argparse.Namespace) -> None:
     from pokerbot.track import list_runs
 
@@ -190,6 +356,48 @@ def main(argv: list[str] | None = None) -> None:
     srep.add_argument("--out", default="docs/STYLES.md")
     srep.set_defaults(func=cmd_styles_report)
 
+    bots = sub.add_parser("bots", help="synthetic opponents").add_subparsers(required=True)
+    cal = bots.add_parser("calibrate", help="fit bot parameters to each style (CMA-ES)")
+    cal.add_argument("--profiles", default="profiles/styles-v1.json")
+    cal.add_argument("--stats", default="data/processed/player_stats.parquet")
+    cal.add_argument("--version", default="v1")
+    cal.add_argument("--out", default=None)
+    cal.add_argument("--format", action="append", default=None, help="sh, fr, hu (repeatable)")
+    cal.add_argument("--rounds", type=int, default=2)
+    cal.add_argument("--iters", type=int, default=30)
+    cal.add_argument("--popsize", type=int, default=14)
+    cal.add_argument("--hands", type=int, default=4000, help="cap on hands per bot evaluation")
+    cal.add_argument("--workers", type=int, default=8)
+    cal.add_argument("--warm-start", default=None, help="earlier bots file to start from")
+    cal.add_argument("--real-showdowns", default="data/processed/showdown_ranges.json",
+                     help="real shown-hand tables to match ('' to skip)")  # fmt: skip
+    cal.set_defaults(func=cmd_bots_calibrate)
+    sdr = bots.add_parser("showdown-real", help="shown-hand strength by line, real players")
+    sdr.add_argument("--data", default=HANDHQ_OUT)
+    sdr.add_argument("--profiles", default="profiles/styles-v1.json")
+    sdr.add_argument("--stats", default="data/processed/player_stats.parquet")
+    sdr.add_argument("--out", default="data/processed/showdown_ranges.json")
+    sdr.add_argument("--format", action="append", default=None, help="sh, fr, hu (repeatable)")
+    sdr.add_argument("--workers", type=int, default=8)
+    sdr.add_argument("--limit-files", type=int, default=None)
+    sdr.set_defaults(func=cmd_bots_showdown_real)
+    val = bots.add_parser("validate", help="compare sampled bots with real players per style")
+    val.add_argument("--bots", default="profiles/bots-v1.json")
+    val.add_argument("--profiles", default="profiles/styles-v1.json")
+    val.add_argument("--format", default="sh")
+    val.add_argument("--workers", type=int, default=8)
+    val.add_argument("--stats", default="data/processed/player_stats.parquet")
+    val.add_argument("--hands", type=int, default=None, help="cap on hands per table")
+    val.add_argument("--real-showdowns", default="data/processed/showdown_ranges.json")
+    val.set_defaults(func=cmd_bots_validate)
+    tune = bots.add_parser("tune-spread", help="measure per-style spread scales (writes x_scale)")
+    tune.add_argument("--bots", default="profiles/bots-v1.json")
+    tune.add_argument("--profiles", default="profiles/styles-v1.json")
+    tune.add_argument("--format", default="sh")
+    tune.add_argument("--stats", default="data/processed/player_stats.parquet")
+    tune.add_argument("--workers", type=int, default=8)
+    tune.set_defaults(func=cmd_bots_tune_spread)
+
     runs = sub.add_parser("runs", help="tracked experiment runs").add_subparsers(required=True)
     runs.add_parser("list", help="all runs").set_defaults(func=cmd_runs_list)
     show = runs.add_parser("show", help="metadata, metrics summary and events of a run")
@@ -201,6 +409,8 @@ def main(argv: list[str] | None = None) -> None:
     plot.set_defaults(func=cmd_runs_plot)
 
     args = parser.parse_args(argv)
+    if getattr(args, "format", "unset") is None:  # calibrate / showdown-real: repeatable --format
+        args.format = ["sh", "hu", "fr"] if args.func is cmd_bots_showdown_real else ["sh"]
     args.func(args)
 
 
