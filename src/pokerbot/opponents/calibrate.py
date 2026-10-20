@@ -414,10 +414,15 @@ def calibrate_format(
     warm_names: tuple[str, ...] = CALIBRATED,
     layout: Layout = LAYOUT["sh"],
     hands_q: np.ndarray | None = None,
+    damping: float = 1.0,
 ) -> tuple[list[StyleResult], Population]:
     """``warm``: styles from an earlier bots file (params, x_cov, x_scale; ``warm_names`` its
     calibrated parameters) to start from; their spread is used from round 0. Without it, round 0
-    calibrates centers with no spread."""
+    calibrates centers with no spread.
+
+    ``damping`` < 1 moves each style's population center only that fraction of the way to its
+    new optimum between rounds (the last round's result is kept whole). Heads-up each style
+    plays only the others, so undamped rounds overshoot and oscillate."""
     depth = [t.depth for t in targets]
     share = np.array([t.share for t in targets])
     if warm:
@@ -458,7 +463,12 @@ def calibrate_format(
             _noise(spread(res, t), scales[i])
             for i, (res, t) in enumerate(zip(results, targets, strict=True))
         ]
-        pop = Population([to_params(res.x) for res in results], depth, share, noise, scales)
+        last = r == rounds - 1
+        centers = [
+            res.x if last else to_x(pop.params[i]) + damping * (res.x - to_x(pop.params[i]))
+            for i, res in enumerate(results)
+        ]
+        pop = Population([to_params(x) for x in centers], depth, share, noise, scales)
         if log:
             log(r, results)
     return results, pop
