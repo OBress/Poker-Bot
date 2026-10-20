@@ -286,6 +286,16 @@ def cmd_baselines_solve(args: argparse.Namespace) -> None:
         print(f"{style:18s} " + " ".join(f"{c:>16s}" for c in cells))
 
 
+def cmd_baselines_blueprint(args: argparse.Namespace) -> None:
+    from pathlib import Path
+
+    from pokerbot.baselines.track_b import run_blueprint
+
+    r = run_blueprint(args.rounds, args.iters, args.workers, args.seed, Path(args.out),
+                      Path(args.checkpoint), resume=not args.fresh)  # fmt: skip
+    print(r)
+
+
 def cmd_runs_list(args: argparse.Namespace) -> None:
     from pokerbot.track import list_runs
 
@@ -425,6 +435,16 @@ def main(argv: list[str] | None = None) -> None:
     solve.add_argument("--seed", type=int, default=0)
     solve.add_argument("--out", default=None)
     solve.set_defaults(func=cmd_baselines_solve)
+
+    bp = base.add_parser("blueprint", help="Track B: train the heads-up MCCFR blueprint")
+    bp.add_argument("--rounds", type=int, default=200, help="total rounds (resume counts done)")
+    bp.add_argument("--iters", type=int, default=4000, help="iterations per worker per round")
+    bp.add_argument("--workers", type=int, default=8)
+    bp.add_argument("--seed", type=int, default=0)
+    bp.add_argument("--out", default="data/processed/blueprint-hu-v1.npz")
+    bp.add_argument("--checkpoint", default="data/processed/blueprint-hu.ckpt")
+    bp.add_argument("--fresh", action="store_true", help="ignore an existing checkpoint")
+    bp.set_defaults(func=cmd_baselines_blueprint)
 
     runs = sub.add_parser("runs", help="tracked experiment runs").add_subparsers(required=True)
     runs.add_parser("list", help="all runs").set_defaults(func=cmd_runs_list)
