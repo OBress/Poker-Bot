@@ -44,13 +44,47 @@ Finding: styles differ mostly preflop; postflop tendencies vary much less across
 
 **Exit:** a short report: chosen K, style table (centroids, shares), stability score, plots.
 
-## Phase 3 — Synthetic opponents (working version; criterion not fully met)
+## Phase 3 — Synthetic opponents (usable; ≥ 90% of style-stat pairs within 1σ in sh and fr)
 
-Done: parametric `StyleBot` (24 parameters), mean-field CMA-ES calibration per style, measured
-per-style spread, seat sampler, validation (`profiles/bots-v2.json`). Validation of ~72 randomized
-bots per short-handed style: 110/144 style-stat pairs (76%) within one real-player σ; most of the
-rest within 2σ. Known misses: short-stacker turn folding (z ≈ +4.8), passive limper's flop
-c-bet defense (z ≈ −3.0), TAG limping (z ≈ +2.0). Heads-up and full-ring styles not calibrated yet.
+Current: `profiles/bots-v3.json` (bot structure 3, 27 parameters) for all three formats.
+Validation of ~72 randomized bots per style (`pokerbot bots validate`):
+
+| Format | Stat pairs within 1σ | within 2σ | Shown equity gap per (style, line) | Run |
+|---|---|---|---|---|
+| sh | 132/144 (92%) | 143/144 | 0.045 (39/61 cells ≤ 0.05) | 20261020-014703-bots-validate-bots-v3-sh |
+| hu | 59/68 (87%) | 68/68 | 0.064 (15/29) | 20261020-014741-bots-validate-bots-v3-hu |
+| fr | 105/108 (97%) | 108/108 | 0.064 (23/42) | 20261020-014811-bots-validate-bots-v3-fr |
+| sh, bots-v2 | 123/144 (85%) | 141/144 | 0.087 (21/63) | 20261019-010202-bots-validate-bots-v2-sh |
+
+Only miss beyond 2σ: sh passive limper WTSD (z = −2.02). hu spread scales sit at the top of the
+tuning grid (median spread ratio 0.6–1.0), so hu bots vary a bit less than real players.
+Calibration runs: sh 20261019-235931-bots-v3-sh-r4 (damped refinement after three earlier
+v3 passes), hu/fr 20261019-021540-bots-v3; spread runs are in the file (`spread_run_id`).
+
+What changed from v2 and why:
+- **Yardstick.** v2 compared per-bot rates smoothed toward 50% with pooled real rates, which
+  overstated misses on rare stats (the v2 short-stacker turn-fold z ≈ +4.8 was mostly this).
+  Bots are now measured like real players: counts through the profile's feature transform, hand
+  counts drawn from real profiled players, compared with the style mixture's mean and spread.
+  The old number is still reported as `legacy`. Calibration uses the same measurement.
+- **Showdown ranges** (MATH.md §4.5). Real per-style tables of shown strength bucket by line
+  class (8 classes, e.g. bet-bet-bet, call-down) from every HandHQ showdown with shown cards:
+  2.59M hands replayed, 2.07M shown hands of fit-set players weighted by soft membership,
+  held-out players excluded (run 20261019-001623-showdown-ranges, `bots showdown-real`).
+  v2 bots bet and got all-in far too light and checked down hands real players bet. Calibration
+  now also matches mean shown equity per line group (0.04 equity ≈ 1σ).
+- **Bot structure 3** (v1/v2 files keep structure 2 behaviour and their own parameter bounds):
+  noise can no longer limp (caused the TAG and short-stacker limp misses) and is capped at 0.05
+  (it sat at 0.2, one decision in five random); `bluff_eq` (only weak hands bluff, medium hands
+  check and never bet the river); `respect` (folds more to c-bets than to stabs); `commit`
+  (short stacks call on pot odds).
+- **Fixes:** tune-spread overwrote `x_scale` with a relative factor (spreads 1.3–1.6× too wide);
+  warm starts left parameters pinned at their bounds (three_bet stuck at 0); mean-field rounds
+  oscillated, so `--damping` moves style centers part way per round.
+
+Still imperfect: the mix of lines bots take to showdown differs from real players (line-mix
+total variation 0.24–0.33); shown-equity per line is closer but not within sampling error.
+Not built yet: drift, tilt and style-switching bots (the last bullet below).
 
 - Parametric bot policy with parameter vector θ.
 - Calibrate θ per style (CMA-ES on stat-matching loss) and fit per-style θ covariance.

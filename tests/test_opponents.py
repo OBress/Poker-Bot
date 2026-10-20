@@ -348,3 +348,14 @@ def test_write_bots_merges_formats_of_one_version(tmp_path: Path) -> None:
     assert set(doc["formats"]) == {"sh", "hu"} and doc["run_id"] == {"sh": "run-sh", "hu": "run-hu"}
     write_bots(path, "v10", "run-x", {"fr": {"styles": []}})  # another version replaces the file
     assert set(json.loads(path.read_text())["formats"]) == {"fr"}
+
+
+def test_bots_v3_draws_every_format() -> None:
+    path = Path(__file__).parents[1] / "profiles" / "bots-v3.json"
+    rng = np.random.default_rng(0)
+    for fmt, seats in (("hu", 2), ("sh", 6), ("fr", 9)):
+        s = StyleSampler(path, fmt)
+        assert s.structure == 3 and "bluff_eq" in s.calibrated
+        bots = [d.bot for d in s.table(rng, seats)]
+        result = play_hand(bots, [int(b.buyin_bb * BIG_BLIND) for b in bots], 0, 1, 50, 100)
+        assert sum(result.payoffs) == 0
