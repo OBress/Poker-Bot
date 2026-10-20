@@ -296,6 +296,16 @@ def cmd_baselines_blueprint(args: argparse.Namespace) -> None:
     print(r)
 
 
+def cmd_baselines_matchups(args: argparse.Namespace) -> None:
+    from pathlib import Path
+
+    from pokerbot.baselines.matchups import run_matchups
+
+    r = run_matchups(args.policy, args.format, Path(args.bots), args.sessions, args.hands,
+                     seed=args.seed, workers=args.workers)  # fmt: skip
+    print(f"run {r['run_id']}: {r['hands_per_policy']:,} hands per policy")
+
+
 def cmd_runs_list(args: argparse.Namespace) -> None:
     from pokerbot.track import list_runs
 
@@ -445,6 +455,17 @@ def main(argv: list[str] | None = None) -> None:
     bp.add_argument("--checkpoint", default="data/processed/blueprint-hu.ckpt")
     bp.add_argument("--fresh", action="store_true", help="ignore an existing checkpoint")
     bp.set_defaults(func=cmd_baselines_blueprint)
+
+    mu = base.add_parser("matchups", help="baseline win rates vs every style (duplicate)")
+    mu.add_argument("--policy", action="append", required=True,
+                    help="abc | hand-strength | blueprint:<path> (repeatable)")  # fmt: skip
+    mu.add_argument("--format", default="hu", choices=["hu", "sh", "fr"])
+    mu.add_argument("--bots", default="profiles/bots-v3.json")
+    mu.add_argument("--sessions", type=int, default=200, help="per style")
+    mu.add_argument("--hands", type=int, default=250, help="per session")
+    mu.add_argument("--seed", type=int, default=0)
+    mu.add_argument("--workers", type=int, default=8)
+    mu.set_defaults(func=cmd_baselines_matchups)
 
     runs = sub.add_parser("runs", help="tracked experiment runs").add_subparsers(required=True)
     runs.add_parser("list", help="all runs").set_defaults(func=cmd_runs_list)

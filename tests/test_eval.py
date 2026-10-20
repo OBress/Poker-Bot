@@ -75,3 +75,10 @@ def test_bootstrap_ci_brackets_the_mean() -> None:
 def test_heuristic_policies_build() -> None:
     assert make_policy("abc", 1).p["noise"] == 0.0
     assert make_policy("hand-strength", 1).buyin_bb == 100.0
+
+
+def test_heads_up_duplicate_cancels_for_a_deterministic_mirror() -> None:
+    from pokerbot.eval.headsup import heads_up
+
+    r = heads_up("hand-strength", "hand-strength", blocks=2, deals_per_block=30, workers=1)
+    assert r["hands"] == 120 and abs(r["bb100"]) < 1e-9
