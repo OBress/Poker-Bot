@@ -165,8 +165,15 @@ class StyleBot:
     ) -> None:
         self.p = {**default_params(), **params}
         self.structure = structure
+        self.seed = None if isinstance(seed, np.random.Generator) else int(seed)
         self.rng = seed if isinstance(seed, np.random.Generator) else np.random.default_rng(seed)
         self.name = name
+
+    def clone(self) -> StyleBot:
+        """A fresh copy with the same parameters and RNG seed (duplicate matches)."""
+        if self.seed is None:
+            raise ValueError("bots built from a Generator can't be cloned")
+        return StyleBot(self.p, self.seed, self.name, self.structure)
 
     @property
     def buyin_bb(self) -> float:
