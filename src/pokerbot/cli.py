@@ -306,6 +306,29 @@ def cmd_baselines_matchups(args: argparse.Namespace) -> None:
     print(f"run {r['run_id']}: {r['hands_per_policy']:,} hands per policy")
 
 
+def cmd_baselines_headsup(args: argparse.Namespace) -> None:
+    from pathlib import Path
+
+    from pokerbot.eval.headsup import heads_up
+    from pokerbot.track import Run
+
+    data = {f"policy{i}": Path(p.split(":", 1)[1]) for i, p in enumerate((args.a, *args.b))
+            if p.startswith("blueprint:")}  # fmt: skip
+    with Run.start("headsup", kind="baseline", config=vars(args) | {"func": None},
+                   seeds={"blocks": args.seed}, data=data) as run:  # fmt: skip
+        results = []
+        for b in args.b:
+            r = heads_up(args.a, b, args.blocks, args.deals, seed=args.seed, workers=args.workers)
+            half = (r["ci95"][1] - r["ci95"][0]) / 2
+            run.log_metrics({"val/bb100": r["bb100"], "val/bb100_ci_half": half}, opponent=b)
+            lo, hi = r["ci95"]
+            print(f"{args.a} vs {b}: {r['bb100']:+.1f} bb/100 [{lo:+.1f}, {hi:+.1f}] "
+                  f"over {r['hands']:,} hands")  # fmt: skip
+            results.append(r)
+        run.save_artifact("headsup.json", {"results": results})
+    print(f"run {run.dir.name}")
+
+
 def cmd_runs_list(args: argparse.Namespace) -> None:
     from pokerbot.track import list_runs
 
@@ -466,6 +489,15 @@ def main(argv: list[str] | None = None) -> None:
     mu.add_argument("--seed", type=int, default=0)
     mu.add_argument("--workers", type=int, default=8)
     mu.set_defaults(func=cmd_baselines_matchups)
+
+    hu = base.add_parser("headsup", help="seat-swapped duplicate heads-up match")
+    hu.add_argument("--a", required=True, help="policy A (abc | hand-strength | blueprint:<path>)")
+    hu.add_argument("--b", action="append", required=True, help="opponent policy (repeatable)")
+    hu.add_argument("--blocks", type=int, default=500)
+    hu.add_argument("--deals", type=int, default=100, help="deals per block (each played twice)")
+    hu.add_argument("--seed", type=int, default=0)
+    hu.add_argument("--workers", type=int, default=8)
+    hu.set_defaults(func=cmd_baselines_headsup)
 
     runs = sub.add_parser("runs", help="tracked experiment runs").add_subparsers(required=True)
     runs.add_parser("list", help="all runs").set_defaults(func=cmd_runs_list)
