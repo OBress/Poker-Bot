@@ -270,6 +270,22 @@ def cmd_bots_tune_spread(args: argparse.Namespace) -> None:
         print({k: round(v, 3) for k, v in scales.items()})
 
 
+def cmd_baselines_solve(args: argparse.Namespace) -> None:
+    from pathlib import Path
+
+    from pokerbot.baselines.track_a import run_track_a
+
+    out = Path(args.out or f"profiles/baseline-{args.game}-v1.json")
+    r = run_track_a(args.game, args.iters, out, players_per_style=args.players, seed=args.seed)
+    print(f"{args.game}: exploitability {r['exploitability']:.2e} chips/hand, "
+          f"hash {r['baseline_hash']}, run {r['run_id']}")  # fmt: skip
+    print(f"{'style':18s} {'nash':>16s} {'best response':>16s} {'headroom':>16s}  (chips/hand)")
+    for style, e in r["styles"].items():
+        cells = [f"{e[k]['mean']:+.3f} +-{e[k]['ci95'][1] - e[k]['mean']:.3f}"
+                 for k in ("nash", "best", "headroom")]  # fmt: skip
+        print(f"{style:18s} " + " ".join(f"{c:>16s}" for c in cells))
+
+
 def cmd_runs_list(args: argparse.Namespace) -> None:
     from pokerbot.track import list_runs
 
@@ -400,6 +416,15 @@ def main(argv: list[str] | None = None) -> None:
     tune.add_argument("--stats", default="data/processed/player_stats.parquet")
     tune.add_argument("--workers", type=int, default=8)
     tune.set_defaults(func=cmd_bots_tune_spread)
+
+    base = sub.add_parser("baselines", help="baselines to beat").add_subparsers(required=True)
+    solve = base.add_parser("solve", help="Track A: CFR+ Nash for kuhn/leduc and its matchups")
+    solve.add_argument("--game", default="leduc", choices=["kuhn", "leduc"])
+    solve.add_argument("--iters", type=int, default=5000)
+    solve.add_argument("--players", type=int, default=200, help="sampled players per style")
+    solve.add_argument("--seed", type=int, default=0)
+    solve.add_argument("--out", default=None)
+    solve.set_defaults(func=cmd_baselines_solve)
 
     runs = sub.add_parser("runs", help="tracked experiment runs").add_subparsers(required=True)
     runs.add_parser("list", help="all runs").set_defaults(func=cmd_runs_list)
