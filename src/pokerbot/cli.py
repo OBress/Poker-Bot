@@ -374,6 +374,47 @@ def cmd_evolve_build_real(args: argparse.Namespace) -> None:
     print(sizes)
 
 
+def cmd_evolve_eval(args: argparse.Namespace) -> None:
+    import json
+    from pathlib import Path
+
+    from pokerbot.evolve.final import evaluate_programs
+    from pokerbot.track import Run
+
+    programs = []
+    data = {"profiles": Path(args.profiles), "showdowns": Path(args.showdowns)}
+    for spec in args.program:
+        name, path, params_path = spec.split(",")
+        params = json.loads(Path(params_path).read_text(encoding="utf-8"))
+        programs.append(
+            (name, Path(path).read_text(encoding="utf-8"), params.get("params", params))
+        )
+        data[f"program_{name}"] = Path(path)
+    if Path(args.real).exists():
+        data["real"] = Path(args.real)
+    config = {k: v for k, v in vars(args).items() if k != "func"}
+    with Run.start(f"eval-classifier-{args.format}", kind="eval", config=config,
+                   data=data) as run:  # fmt: skip
+        r = evaluate_programs(programs, args.format, Path(args.profiles), Path(args.showdowns),
+                              Path(args.real))  # fmt: skip
+        run.save_artifact("evaluation.json", r)
+        for name, e in r["programs"].items():
+            for t, v in e["test"].items():
+                if isinstance(v, dict):
+                    run.log_metrics({f"test/logloss@{t}": v["logloss"],
+                                     f"test/accuracy@{t}": v["accuracy"],
+                                     f"test/ece@{t}": v["ece"]}, program=name)  # fmt: skip
+            for g in ("real_val", "real_test"):
+                for t, v in e.get(g, {}).items():
+                    m = {f"real/xent@{t}": v["xent"], f"real/accuracy@{t}": v["accuracy"]}
+                    run.log_metrics(m, program=name, group=g)
+        if "paired" in r:
+            run.log_metrics({"test/score_delta": r["paired"]["score_delta"],
+                             "test/p_one_sided": r["paired"]["p_one_sided"]})  # fmt: skip
+    print(json.dumps(r, indent=1)[:6000])
+    print(f"run {run.dir.name}")
+
+
 def cmd_evolve_classifier(args: argparse.Namespace) -> None:
     import json
     from pathlib import Path
@@ -628,6 +669,19 @@ def main(argv: list[str] | None = None) -> None:
     br.add_argument("--seed", type=int, default=0)
     br.add_argument("--workers", type=int, default=6)
     br.set_defaults(func=cmd_evolve_build_real)
+
+    ev = evo.add_parser("eval-classifier", help="final evaluation on test seeds and real players")
+    ev.add_argument(
+        "--program",
+        action="append",
+        required=True,
+        help="name,program.py,params.json (repeatable; first vs second is paired)",
+    )
+    ev.add_argument("--format", default="sh", choices=["hu", "sh", "fr"])
+    ev.add_argument("--profiles", default="profiles/styles-v1.json")
+    ev.add_argument("--showdowns", default="data/processed/showdown_ranges.json")
+    ev.add_argument("--real", default="data/processed/clf/sh-real.pkl.xz")
+    ev.set_defaults(func=cmd_evolve_eval)
 
     ec = evo.add_parser("classifier", help="evolve the style classifier with the LLM")
     ec.add_argument("--format", default="sh", choices=["hu", "sh", "fr"])
