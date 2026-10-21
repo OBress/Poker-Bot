@@ -241,8 +241,10 @@ def _deal(rng: np.random.Generator) -> tuple[int, int, int]:
     return deck[x], deck[y], deck[p]
 
 
-def run_session(make, spec: SessionSpec, oracle: bool = False) -> dict:
-    """Play one session with a fresh program. Returns per-hand d, KL and bookkeeping."""
+def run_session(make, spec: SessionSpec, oracle: bool = False, prior_only: bool = False) -> dict:
+    """Play one session with a fresh program. Returns per-hand d, KL and bookkeeping.
+    Ablations: ``oracle`` gives the true style as one-hot beliefs (population mix vs Nash);
+    ``prior_only`` gives the population mix throughout (no classifier)."""
     table = style_table()
     nash = _nash()
     strategies, labels = opponents(spec)
@@ -258,7 +260,9 @@ def run_session(make, spec: SessionSpec, oracle: bool = False) -> dict:
         seat = h % 2
         x, y, pub = _deal(rng)
         cards = (x, y) if seat == 0 else (y, x)
-        if oracle:
+        if prior_only:
+            b = table.shares.copy()
+        elif oracle:
             b = np.eye(table.k)[labels[h]] if labels[h] is not None else table.shares.copy()
         else:
             b = beliefs.posterior()

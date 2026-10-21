@@ -21,7 +21,9 @@ SIZES = {"train": 60, "val_a": 120, "val_b": 120, "test": 200}
 INDENT = {"params": "", "helpers": "", "state": " " * 8, "observe": " " * 8, "policy": " " * 8}
 
 
-def _run(source: str, params: dict, split: str, idx: list[int], oracle: bool):
+def _run(
+    source: str, params: dict, split: str, idx: list[int], oracle: bool, prior_only: bool = False
+):
     try:
         ns = program.load(source, TEMPLATE)
         table = leduc.style_table()
@@ -48,9 +50,10 @@ class LeducEvaluator:
         timeout_s: float = 300.0,
         allow_test: bool = False,
         oracle: bool = False,
+        prior_only: bool = False,
     ) -> None:
         self.workers, self.timeout_s = workers, timeout_s
-        self.allow_test, self.oracle = allow_test, oracle
+        self.allow_test, self.oracle, self.prior_only = allow_test, oracle, prior_only
         self.sizes = SIZES
         self._start()
 
@@ -70,7 +73,10 @@ class LeducEvaluator:
         if reverse:
             idx = idx[::-1]
         parts = [idx[i :: self.workers] for i in range(self.workers) if idx[i :: self.workers]]
-        jobs = [self.pool.apply_async(_run, (source, params, split, p, self.oracle)) for p in parts]
+        jobs = [
+            self.pool.apply_async(_run, (source, params, split, p, self.oracle, self.prior_only))
+            for p in parts
+        ]
         outs = []
         try:
             for j in jobs:
