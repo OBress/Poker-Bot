@@ -352,6 +352,67 @@ def cmd_evolve_build_data(args: argparse.Namespace) -> None:
                    seconds=time.perf_counter() - start)  # fmt: skip
 
 
+def cmd_evolve_classifier(args: argparse.Namespace) -> None:
+    import json
+    from pathlib import Path
+
+    from pokerbot.evolve.loop import evolve_classifier
+    from pokerbot.llm import LLMClient
+    from pokerbot.track import Run
+
+    seeds = {Path(p).stem: Path(p).read_text(encoding="utf-8") for p in args.seed_program}
+    config = {k: v for k, v in vars(args).items() if k != "func"}
+    data = {
+        "profiles": Path(args.profiles),
+        "showdowns": Path(args.showdowns),
+        **{f"seed_{k}": Path(p) for k, p in zip(seeds, args.seed_program, strict=True)},
+    }
+    with Run.start(
+        f"evolve-classifier-{args.format}",
+        kind="evolve-classifier",
+        config=config,
+        seeds={"loop": args.seed},
+        data=data,
+    ) as run:
+        llm = LLMClient.from_env()
+        llm.run = run
+        out = evolve_classifier(
+            run,
+            llm,
+            args.format,
+            Path(args.profiles),
+            Path(args.showdowns),
+            seeds,
+            args.generations,
+            args.proposals,
+            workers=args.workers,
+            seed=args.seed,
+            max_calls=args.max_calls,
+        )
+        champ = out["champion"]
+        dest = Path(args.out_dir) / f"champion-{run.dir.name}.py"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(champ["source"], encoding="utf-8")
+        meta = {
+            "run_id": run.dir.name,
+            "candidate": champ["id"],
+            "params": champ["params"],
+            "val_a": champ["val"],
+            "idea": champ["idea"],
+        }
+        dest.with_suffix(".json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
+        run.save_artifact("champion.json", meta)
+        u = llm.usage
+        run.finish(
+            champion=champ["id"],
+            val_fitness=champ["val"]["fitness"],
+            llm_calls=u.calls,
+            prompt_tokens=u.prompt_tokens,
+            completion_tokens=u.completion_tokens,
+        )
+    print(f"champion {champ['id']} val_a fitness {champ['val']['fitness']:.4f} -> {dest}")
+
+
 def cmd_runs_list(args: argparse.Namespace) -> None:
     from pokerbot.track import list_runs
 
@@ -531,6 +592,23 @@ def main(argv: list[str] | None = None) -> None:
     bd.add_argument("--sessions", type=int, default=240)
     bd.add_argument("--workers", type=int, default=8)
     bd.set_defaults(func=cmd_evolve_build_data)
+
+    ec = evo.add_parser("classifier", help="evolve the style classifier with the LLM")
+    ec.add_argument("--format", default="sh", choices=["hu", "sh", "fr"])
+    ec.add_argument("--profiles", default="profiles/styles-v1.json")
+    ec.add_argument("--showdowns", default="data/processed/showdown_ranges.json")
+    ec.add_argument(
+        "--seed-program",
+        action="append",
+        default=["programs/classifier/seed_a.py", "programs/classifier/seed_b.py"],
+    )
+    ec.add_argument("--generations", type=int, default=10)
+    ec.add_argument("--proposals", type=int, default=8)
+    ec.add_argument("--max-calls", type=int, default=300, help="LLM call budget")
+    ec.add_argument("--workers", type=int, default=8)
+    ec.add_argument("--seed", type=int, default=0)
+    ec.add_argument("--out-dir", default="programs/classifier")
+    ec.set_defaults(func=cmd_evolve_classifier)
 
     runs = sub.add_parser("runs", help="tracked experiment runs").add_subparsers(required=True)
     runs.add_parser("list", help="all runs").set_defaults(func=cmd_runs_list)

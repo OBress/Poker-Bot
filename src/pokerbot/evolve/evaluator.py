@@ -24,9 +24,11 @@ _PROFILES: list[StyleProfiles] = []
 EVOLVE_SPLITS = ("train", "val_a", "val_b")
 
 
-def _init(fmt: str, profiles_path: str, showdown_path: str, splits: tuple[str, ...]) -> None:
+def _init(
+    fmt: str, profiles_path: str, showdown_path: str, splits: tuple[str, ...], root: str
+) -> None:
     for split in splits:
-        _DATA[split] = dataset.load(fmt, split)  # refuses "test"
+        _DATA[split] = dataset.load(fmt, split, root=root)  # refuses "test"
     _PROFILES.append(StyleProfiles.load(profiles_path, fmt, showdown_path))
 
 
@@ -59,11 +61,11 @@ class Result:
 
 class Evaluator:
     def __init__(self, fmt: str, profiles_path: str, showdown_path: str, workers: int = 8,
-                 timeout_s: float = 120.0) -> None:  # fmt: skip
-        self.args = (fmt, str(profiles_path), str(showdown_path), EVOLVE_SPLITS)
+                 timeout_s: float = 120.0, root=dataset.ROOT) -> None:  # fmt: skip
+        self.args = (fmt, str(profiles_path), str(showdown_path), EVOLVE_SPLITS, str(root))
         self.workers = workers
         self.timeout_s = timeout_s
-        self.sizes = {s: len(dataset.load(fmt, s)) for s in EVOLVE_SPLITS}
+        self.sizes = {s: len(dataset.load(fmt, s, root=root)) for s in EVOLVE_SPLITS}
         self._start()
 
     def _start(self) -> None:

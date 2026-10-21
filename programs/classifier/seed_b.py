@@ -35,7 +35,8 @@ PARAMS = {
 def _softmax(logits: np.ndarray) -> np.ndarray:
     z = logits - logits.max()
     e = np.exp(z)
-    return e / e.sum()# END-EVOLVE-BLOCK
+    return e / e.sum()
+# END-EVOLVE-BLOCK
 
 
 class Classifier:

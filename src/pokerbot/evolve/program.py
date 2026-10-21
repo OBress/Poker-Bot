@@ -19,7 +19,11 @@ import re
 from pathlib import Path
 
 TEMPLATES = Path(__file__).with_name("templates")
-_BLOCK = re.compile(r"(# EVOLVE-BLOCK (\w+)\n)(.*?)(\n[ \t]*# END-EVOLVE-BLOCK)", re.S)
+# A block body is the whole lines between its marker line and the END line. Both are anchored at
+# line starts, so an empty block can't run on into the next block's END marker.
+_BLOCK = re.compile(
+    r"(^[ \t]*# EVOLVE-BLOCK (\w+)[ \t]*\n)(.*?)(^[ \t]*# END-EVOLVE-BLOCK)", re.S | re.M
+)
 ALLOWED_IMPORTS = {"math", "numpy", "pokerbot.evolve.api"}
 FORBIDDEN_NAMES = {
     "eval", "exec", "compile", "open", "__import__", "globals", "locals", "vars", "getattr",
@@ -65,6 +69,8 @@ def frozen(source: str) -> str:
 
 
 def replace_block(source: str, name: str, body: str) -> str:
+    if body and not body.endswith("\n"):
+        body += "\n"
     for m in _BLOCK.finditer(source):
         if m.group(2) == name:
             return source[: m.start(3)] + body + source[m.end(3) :]
