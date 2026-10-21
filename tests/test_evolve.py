@@ -61,7 +61,10 @@ def test_seeds_load_and_score_valid_posteriors() -> None:
 
 
 def test_answers_replace_blocks_with_the_right_indentation() -> None:
-    answer = "IDEA: flatter prior\n<<<BLOCK posterior>>>\nreturn np.ones(self.profiles.k)\n<<<END BLOCK>>>"
+    answer = (
+        "IDEA: flatter prior\n<<<BLOCK posterior>>>\nreturn np.ones(self.profiles.k)\n"
+        "<<<END BLOCK>>>"
+    )
     src, idea = prompts.apply_answer(SEED_A, answer)
     assert idea == "flatter prior" and "        return np.ones(self.profiles.k)" in src
     program.check(src)
