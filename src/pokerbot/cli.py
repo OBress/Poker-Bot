@@ -329,6 +329,29 @@ def cmd_baselines_headsup(args: argparse.Namespace) -> None:
     print(f"run {run.dir.name}")
 
 
+def cmd_evolve_build_data(args: argparse.Namespace) -> None:
+    import time
+    from pathlib import Path
+
+    from pokerbot.evolve import dataset
+    from pokerbot.track import Run
+
+    start = time.perf_counter()
+    config = {k: v for k, v in vars(args).items() if k != "func"}
+    with Run.start(f"clf-data-{args.format}", kind="data", config=config,
+                   seeds={s: dataset.SPLITS[s] * 10_000_000 for s in args.split},
+                   data={"bots": Path(args.bots)}) as run:  # fmt: skip
+        sizes = {}
+        for split in args.split:
+            path = dataset.build(Path(args.bots), args.format, split, args.sessions,
+                                 workers=args.workers)  # fmt: skip
+            sizes[split] = path.stat().st_size
+            run.log_metric(f"{split}/sessions", args.sessions)
+            print(f"{split}: {path} ({sizes[split] / 1e6:.1f} MB)", flush=True)
+        run.finish(sessions_per_split=args.sessions, bytes=sizes,
+                   seconds=time.perf_counter() - start)  # fmt: skip
+
+
 def cmd_runs_list(args: argparse.Namespace) -> None:
     from pokerbot.track import list_runs
 
@@ -498,6 +521,16 @@ def main(argv: list[str] | None = None) -> None:
     hu.add_argument("--seed", type=int, default=0)
     hu.add_argument("--workers", type=int, default=8)
     hu.set_defaults(func=cmd_baselines_headsup)
+
+    evo = sub.add_parser("evolve", help="LLM-driven program search").add_subparsers(required=True)
+    bd = evo.add_parser("build-data", help="simulate classifier sessions for the given splits")
+    bd.add_argument("--format", default="sh", choices=["hu", "sh", "fr"])
+    bd.add_argument("--bots", default="profiles/bots-v3.json")
+    bd.add_argument("--split", action="append", required=True,
+                    choices=["train", "val_a", "val_b", "test"])  # fmt: skip
+    bd.add_argument("--sessions", type=int, default=240)
+    bd.add_argument("--workers", type=int, default=8)
+    bd.set_defaults(func=cmd_evolve_build_data)
 
     runs = sub.add_parser("runs", help="tracked experiment runs").add_subparsers(required=True)
     runs.add_parser("list", help="all runs").set_defaults(func=cmd_runs_list)
