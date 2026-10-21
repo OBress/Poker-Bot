@@ -158,7 +158,38 @@ For 6-max there is no equilibrium baseline; ABC TAG is the reference (Track C is
 
 **Exit:** baseline win rates vs every style recorded with CIs. This is the number to beat.
 
-## Phase 5 — Classifier evolution
+## Phase 5 — Classifier evolution (first run done on Track C; exit met on log loss)
+
+Done: frozen harness (`evolve/`: API, redaction, feature tracker, AST allow-list sandbox with
+timeouts, CMA-ES tuner, prompts with failure reports, two-batch promotion test), two seeds
+(`programs/classifier/seed_a.py` Beta-Binomial naive Bayes, `seed_b.py` correlated Gaussian, both
+with the showdown term), datasets of 240 seeded short-handed sessions per split (1,440 seats each;
+runs 20261020-235922-clf-data-sh for train/val and 20261021-003649-clf-data-sh for test), and 300 fit-set + 300
+held-out real players' first 200 hands (run 20261021-011630-clf-real-sh).
+
+First evolution (run 20261021-002216-evolve-classifier-sh; DeepSeek V4.1 Flash, 10 generations
+× 8 proposals, 96 calls, 0.50M prompt + 1.72M completion tokens): one promotion, g03-1 (p 1.5e-6
+on val_a, 0.002 on val_b), which weights each stat's evidence by how well it separates the styles
+and mixes the Beta-Binomial and Gaussian likelihoods; no later candidate passed. Champion:
+`programs/classifier/champion-20261021-002216-evolve-classifier-sh.py`.
+
+Final evaluation (run 20261021-011945-eval-classifier-sh; test seeds and held-out players were
+used here only):
+
+| Hands | Test accuracy, champion | Test accuracy, seed A (tuned) | Held-out real, champion acc / H(q,p) | Held-out real, seed A acc / H(q,p) |
+|---|---|---|---|---|
+| 10 | 0.358 [0.334, 0.384] | 0.369 [0.344, 0.394] | 0.350 / 1.660 | 0.367 / 1.634 |
+| 25 | 0.447 [0.422, 0.473] | 0.448 [0.423, 0.474] | 0.413 / 1.433 | 0.423 / 1.418 |
+| 50 | 0.523 [0.498, 0.549] | 0.510 [0.486, 0.537] | 0.500 / 1.282 | 0.503 / 1.288 |
+| 100 | 0.613 [0.588, 0.638] | 0.599 [0.576, 0.626] | 0.580 / 1.081 | 0.563 / 1.114 |
+| 200 | 0.662 [0.638, 0.688] | 0.642 [0.618, 0.667] | 0.620 / 0.963 | 0.640 / 1.010 |
+
+The champion's weighted log loss (the fitness, MATH §6.3) beats the seed on test seeds by 0.0147
+[0.0023, 0.0266] per session, one-sided paired p = 0.008: significant, but small. The gain is at
+50+ hands; at 10–25 hands it is slightly worse. Real-player transfer is about as good as on
+simulated tables (62–64% at 200 hands vs 64–66%), so the bots are a fair stand-in; on held-out
+players the champion has lower cross-entropy from 100 hands on but not higher accuracy.
+Next: more generations and proposals, early-hand instructions, and Track B heads-up.
 
 - Hand-written seed classifier (Bayesian stat counts vs style Gaussians).
 - `evolve/` loop: prompt builder, sandbox, numeric tuner, population store, promotion test.
