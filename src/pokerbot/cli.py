@@ -415,6 +415,71 @@ def cmd_evolve_eval(args: argparse.Namespace) -> None:
     print(f"run {run.dir.name}")
 
 
+def cmd_evolve_exploiter_leduc(args: argparse.Namespace) -> None:
+    import json
+    from dataclasses import replace
+    from pathlib import Path
+
+    from pokerbot.evolve.loop import evolve, leduc_task
+    from pokerbot.llm import LLMClient, LLMSettings
+    from pokerbot.track import Run
+
+    seeds: dict = {}
+    data = {"baseline": Path("profiles/baseline-leduc-v1.json")}
+    for spec in args.seed_program or ["programs/exploiter_leduc/seed.py"]:
+        path, _, params_path = spec.partition(",")
+        name = Path(path).stem.split("-")[0]
+        src = Path(path).read_text(encoding="utf-8")
+        if params_path:
+            doc = json.loads(Path(params_path).read_text(encoding="utf-8"))
+            seeds[name] = (src, doc.get("params", doc))
+        else:
+            seeds[name] = src
+        data[f"seed_{name}"] = Path(path)
+    config = {k: v for k, v in vars(args).items() if k != "func"}
+    with Run.start(
+        "evolve-exploiter-leduc",
+        kind="evolve-exploiter",
+        config=config,
+        seeds={"loop": args.seed},
+        data=data,
+    ) as run:
+        llm = LLMClient(replace(LLMSettings.from_env(), timeout_s=600.0), run=run)
+        out = evolve(
+            run,
+            llm,
+            leduc_task(args.workers),
+            seeds,
+            args.generations,
+            args.proposals,
+            seed=args.seed,
+            tune_iters=args.tune_iters,
+            max_calls=args.max_calls,
+        )
+        champ = out["champion"]
+        dest = Path(args.out_dir) / f"champion-{run.dir.name}.py"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(champ["source"], encoding="utf-8")
+        meta = {
+            "run_id": run.dir.name,
+            "candidate": champ["id"],
+            "params": champ["params"],
+            "val_a": champ["val"],
+            "idea": champ["idea"],
+        }
+        dest.with_suffix(".json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
+        run.save_artifact("champion.json", meta)
+        u = llm.usage
+        run.finish(
+            champion=champ["id"],
+            val_fitness=champ["val"]["fitness"],
+            llm_calls=u.calls,
+            prompt_tokens=u.prompt_tokens,
+            completion_tokens=u.completion_tokens,
+        )
+    print(f"champion {champ['id']} val_a fitness {champ['val']['fitness']:.4f} -> {dest}")
+
+
 def cmd_evolve_classifier(args: argparse.Namespace) -> None:
     import json
     from pathlib import Path
@@ -692,6 +757,22 @@ def main(argv: list[str] | None = None) -> None:
     ev.add_argument("--showdowns", default="data/processed/showdown_ranges.json")
     ev.add_argument("--real", default="data/processed/clf/sh-real.pkl.xz")
     ev.set_defaults(func=cmd_evolve_eval)
+
+    el = evo.add_parser("exploiter-leduc", help="evolve the Leduc exploiter with the LLM")
+    el.add_argument(
+        "--seed-program",
+        action="append",
+        default=None,
+        help="program.py[,params.json] to start from (repeatable)",
+    )
+    el.add_argument("--generations", type=int, default=10)
+    el.add_argument("--proposals", type=int, default=8)
+    el.add_argument("--tune-iters", type=int, default=6)
+    el.add_argument("--max-calls", type=int, default=300)
+    el.add_argument("--workers", type=int, default=8)
+    el.add_argument("--seed", type=int, default=0)
+    el.add_argument("--out-dir", default="programs/exploiter_leduc")
+    el.set_defaults(func=cmd_evolve_exploiter_leduc)
 
     ec = evo.add_parser("classifier", help="evolve the style classifier with the LLM")
     ec.add_argument("--format", default="sh", choices=["hu", "sh", "fr"])

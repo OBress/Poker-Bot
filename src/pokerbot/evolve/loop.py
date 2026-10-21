@@ -18,6 +18,8 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -70,6 +72,43 @@ def _log_candidate(run, c: dict, prompt_hash: str | None) -> None:
     )
 
 
+@dataclass
+class Task:
+    """What the loop evolves: the template, prompts, evaluator and failure report."""
+
+    kind: str
+    template: str
+    system: str
+    instructions: list[str]
+    indent: dict[str, str]
+    make_evaluator: Callable[[], object]
+    report: Callable[[object], str]
+    table: Callable[[dict], str]
+
+
+def classifier_task(
+    fmt: str,
+    profiles_path: Path,
+    showdown_path: Path,
+    workers: int = 8,
+    data_root: Path | None = None,
+) -> Task:
+    prof = StyleProfiles.load(profiles_path, fmt, showdown_path)
+    kw = {"root": data_root} if data_root else {}
+    return Task(
+        kind="evolve-classifier",
+        template="classifier_v1",
+        system=prompts.SYSTEM,
+        instructions=prompts.INSTRUCTIONS,
+        indent=prompts.CLASSIFIER_INDENT,
+        make_evaluator=lambda: Evaluator(
+            fmt, str(profiles_path), str(showdown_path), workers=workers, **kw
+        ),
+        report=lambda r: classifier_report(r.posteriors, r.labels, prof),
+        table=prompts.classifier_table,
+    )
+
+
 def evolve_classifier(
     run,
     llm,
@@ -85,18 +124,32 @@ def evolve_classifier(
     max_calls: int = 400,
     data_root: Path | None = None,
 ) -> dict:
+    task = classifier_task(fmt, profiles_path, showdown_path, workers, data_root)
+    return evolve(run, llm, task, seeds, generations, proposals, seed, tune_iters, max_calls)
+
+
+def evolve(
+    run,
+    llm,
+    task: Task,
+    seeds: dict[str, str | tuple[str, dict]],
+    generations: int,
+    proposals: int,
+    seed: int = 0,
+    tune_iters: int = 8,
+    max_calls: int = 400,
+) -> dict:
     rng = np.random.default_rng(seed)
-    prof = StyleProfiles.load(profiles_path, fmt, showdown_path)
-    kw = {"root": data_root} if data_root else {}
-    ev = Evaluator(fmt, str(profiles_path), str(showdown_path), workers=workers, **kw)
+    ev = task.make_evaluator()
     archive: list[dict] = []
     history: list[str] = []
     try:
         for name, entry in seeds.items():
             src, given = entry if isinstance(entry, tuple) else (entry, {})
-            ns = program.load(src)
-            start = {k: min(max(given.get(k, v.default), v.low), v.high)
-                     for k, v in ns["PARAMS"].items()}  # fmt: skip
+            ns = program.load(src, task.template)
+            start = {
+                k: min(max(given.get(k, v.default), v.low), v.high) for k, v in ns["PARAMS"].items()
+            }
             ev.gate(src, start)
             params, train_f = tune(ev, src, ns["PARAMS"], start, iters=tune_iters, seed=seed)
             c = _candidate(
@@ -125,15 +178,12 @@ def evolve_classifier(
                 for _ in range(proposals)
             ]
             instr = [
-                prompts.INSTRUCTIONS[(g * proposals + i) % len(prompts.INSTRUCTIONS)]
+                task.instructions[(g * proposals + i) % len(task.instructions)]
                 for i in range(proposals)
             ]
             msgs = [
                 prompts.build(
-                    p,
-                    classifier_report(p["val_result"].posteriors, p["val_result"].labels, prof),
-                    history,
-                    ins,
+                    p, task.report(p["val_result"]), history, ins, task.system, task.table
                 )
                 for p, ins in zip(parents, instr, strict=True)
             ]
@@ -150,8 +200,8 @@ def evolve_classifier(
                 src = idea = None
                 for attempt in range(2):
                     try:
-                        src, idea = prompts.apply_answer(parent["source"], text)
-                        ns = program.load(src)
+                        src, idea = prompts.apply_answer(parent["source"], text, task.indent)
+                        ns = program.load(src, task.template)
                         start = {
                             k: parent["params"].get(k, v.default) for k, v in ns["PARAMS"].items()
                         }
@@ -269,3 +319,18 @@ def evolve_classifier(
     finally:
         ev.close()
     return {"champion": champion, "archive": archive}
+
+
+def leduc_task(workers: int = 8) -> Task:
+    from pokerbot.evolve import leduc_task as lt
+
+    return Task(
+        kind="evolve-exploiter",
+        template=lt.TEMPLATE,
+        system=lt.SYSTEM,
+        instructions=lt.INSTRUCTIONS,
+        indent=lt.INDENT,
+        make_evaluator=lambda: lt.LeducEvaluator(workers=workers),
+        report=lt.report,
+        table=lt.table,
+    )

@@ -19,6 +19,7 @@ import re
 from pathlib import Path
 
 TEMPLATES = Path(__file__).with_name("templates")
+CLASS_OF = {"classifier_v1": "Classifier", "exploiter_leduc_v1": "Exploiter"}
 # A block body is the whole lines between its marker line and the END line. Both are anchored at
 # line starts, so an empty block can't run on into the next block's END marker.
 _BLOCK = re.compile(
@@ -137,8 +138,9 @@ def load(source: str, template_name: str = "classifier_v1") -> dict:
     params = namespace.get("PARAMS")
     if not isinstance(params, dict) or not all(isinstance(v, api.Param) for v in params.values()):
         raise ProgramError("params", "PARAMS must map names to param(default, low, high)")
-    if "Classifier" not in namespace:
-        raise ProgramError("contract", "no Classifier class")
+    cls = CLASS_OF.get(template_name, "Classifier")
+    if cls not in namespace:
+        raise ProgramError("contract", f"no {cls} class")
     return namespace
 
 
