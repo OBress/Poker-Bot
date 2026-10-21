@@ -81,6 +81,11 @@ INSTRUCTIONS = [
     "short-stacked hands don't mislead the posterior.",
     "Simplify: remove anything that doesn't help and make the posterior faster, without losing "
     "accuracy.",
+    "After only 10 hands most stats have one or two opportunities: make the 10-hand posterior "
+    "better than the population mix by using what is observed (VPIP, PFR, limps, blind play) "
+    "without overreacting to it.",
+    "Make the posterior's sharpness depend on the number of hands and opportunities seen, so it "
+    "is cautious at 10-25 hands and decisive at 100-200.",
 ]
 
 

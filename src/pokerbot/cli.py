@@ -423,13 +423,23 @@ def cmd_evolve_classifier(args: argparse.Namespace) -> None:
     from pokerbot.llm import LLMClient
     from pokerbot.track import Run
 
-    seeds = {Path(p).stem: Path(p).read_text(encoding="utf-8") for p in args.seed_program}
+    seeds: dict = {}
+    data = {"profiles": Path(args.profiles), "showdowns": Path(args.showdowns)}
+    for spec in args.seed_program or [
+        "programs/classifier/seed_a.py",
+        "programs/classifier/seed_b.py",
+    ]:
+        path, _, params_path = spec.partition(",")
+        name = Path(path).stem.split("-")[0]
+        src = Path(path).read_text(encoding="utf-8")
+        if params_path:
+            doc = json.loads(Path(params_path).read_text(encoding="utf-8"))
+            seeds[name] = (src, doc.get("params", doc))
+            data[f"params_{name}"] = Path(params_path)
+        else:
+            seeds[name] = src
+        data[f"seed_{name}"] = Path(path)
     config = {k: v for k, v in vars(args).items() if k != "func"}
-    data = {
-        "profiles": Path(args.profiles),
-        "showdowns": Path(args.showdowns),
-        **{f"seed_{k}": Path(p) for k, p in zip(seeds, args.seed_program, strict=True)},
-    }
     with Run.start(
         f"evolve-classifier-{args.format}",
         kind="evolve-classifier",
@@ -690,8 +700,10 @@ def main(argv: list[str] | None = None) -> None:
     ec.add_argument(
         "--seed-program",
         action="append",
-        default=["programs/classifier/seed_a.py", "programs/classifier/seed_b.py"],
+        default=None,
+        help="program.py[,params.json] to start from (repeatable; default: seeds)",
     )
+
     ec.add_argument("--generations", type=int, default=10)
     ec.add_argument("--proposals", type=int, default=8)
     ec.add_argument("--max-calls", type=int, default=300, help="LLM call budget")

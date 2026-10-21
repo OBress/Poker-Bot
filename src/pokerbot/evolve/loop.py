@@ -76,7 +76,7 @@ def evolve_classifier(
     fmt: str,
     profiles_path: Path,
     showdown_path: Path,
-    seeds: dict[str, str],
+    seeds: dict[str, str | tuple[str, dict]],
     generations: int,
     proposals: int,
     workers: int = 8,
@@ -92,12 +92,13 @@ def evolve_classifier(
     archive: list[dict] = []
     history: list[str] = []
     try:
-        for name, src in seeds.items():
+        for name, entry in seeds.items():
+            src, given = entry if isinstance(entry, tuple) else (entry, {})
             ns = program.load(src)
-            ev.gate(src, program.defaults(ns))
-            params, train_f = tune(
-                ev, src, ns["PARAMS"], program.defaults(ns), iters=tune_iters, seed=seed
-            )
+            start = {k: min(max(given.get(k, v.default), v.low), v.high)
+                     for k, v in ns["PARAMS"].items()}  # fmt: skip
+            ev.gate(src, start)
+            params, train_f = tune(ev, src, ns["PARAMS"], start, iters=tune_iters, seed=seed)
             c = _candidate(
                 name,
                 src,
