@@ -352,6 +352,28 @@ def cmd_evolve_build_data(args: argparse.Namespace) -> None:
                    seconds=time.perf_counter() - start)  # fmt: skip
 
 
+def cmd_evolve_build_real(args: argparse.Namespace) -> None:
+    import time
+    from pathlib import Path
+
+    from pokerbot.evolve.realdata import build_real
+    from pokerbot.track import Run
+
+    start = time.perf_counter()
+    config = {k: v for k, v in vars(args).items() if k != "func"}
+    data = {"hands": Path(args.data), "profiles": Path(args.profiles),
+            "player_stats": Path(args.stats)}  # fmt: skip
+    with Run.start(f"clf-real-{args.format}", kind="data", config=config,
+                   seeds={"players": args.seed}, data=data) as run:  # fmt: skip
+        sizes = build_real(Path(args.profiles), Path(args.stats), Path(args.data), args.format,
+                           Path(args.out), per_group=args.players, seed=args.seed,
+                           workers=args.workers)  # fmt: skip
+        for g, n in sizes.items():
+            run.log_metric(f"{g}/players", n)
+        run.finish(players=sizes, seconds=time.perf_counter() - start)
+    print(sizes)
+
+
 def cmd_evolve_classifier(args: argparse.Namespace) -> None:
     import json
     from pathlib import Path
@@ -595,6 +617,17 @@ def main(argv: list[str] | None = None) -> None:
     bd.add_argument("--sessions", type=int, default=240)
     bd.add_argument("--workers", type=int, default=8)
     bd.set_defaults(func=cmd_evolve_build_data)
+
+    br = evo.add_parser("build-real", help="real players' first hands, for transfer scoring")
+    br.add_argument("--format", default="sh", choices=["hu", "sh", "fr"])
+    br.add_argument("--data", default=HANDHQ_OUT)
+    br.add_argument("--profiles", default="profiles/styles-v1.json")
+    br.add_argument("--stats", default="data/processed/player_stats.parquet")
+    br.add_argument("--out", default="data/processed/clf/sh-real.pkl.xz")
+    br.add_argument("--players", type=int, default=300, help="per group (fit-set / held-out)")
+    br.add_argument("--seed", type=int, default=0)
+    br.add_argument("--workers", type=int, default=6)
+    br.set_defaults(func=cmd_evolve_build_real)
 
     ec = evo.add_parser("classifier", help="evolve the style classifier with the LLM")
     ec.add_argument("--format", default="sh", choices=["hu", "sh", "fr"])
