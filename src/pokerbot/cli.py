@@ -374,8 +374,11 @@ def cmd_evolve_classifier(args: argparse.Namespace) -> None:
         seeds={"loop": args.seed},
         data=data,
     ) as run:
-        llm = LLMClient.from_env()
-        llm.run = run
+        from dataclasses import replace
+
+        from pokerbot.llm import LLMSettings
+
+        llm = LLMClient(replace(LLMSettings.from_env(), timeout_s=600.0), run=run)
         out = evolve_classifier(
             run,
             llm,

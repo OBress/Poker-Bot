@@ -32,6 +32,9 @@ from pokerbot.evolve.tuner import tune
 
 PROMOTE_P = 0.01
 ARCHIVE = 8
+# DeepSeek V4.1 Flash reasons before answering (~20k tokens on these prompts); a smaller budget
+# returns empty answers.
+MAX_TOKENS = 32_000
 
 
 def _candidate(cid, source, parent, idea, instruction, gen, params, train_f, val) -> dict:
@@ -135,7 +138,7 @@ def evolve_classifier(
             ]
             calls0 = llm.usage.calls
             answers = llm.complete_many(
-                msgs, temperature=0.9, max_tokens=6000, purpose=f"classifier gen {g}"
+                msgs, temperature=0.9, max_tokens=MAX_TOKENS, purpose=f"classifier gen {g}"
             )
             failed: dict[str, int] = {}
             new: list[dict] = []
@@ -172,7 +175,7 @@ def evolve_classifier(
                         text = llm.complete(
                             prompts.repair(m, text, str(e)[-1500:]),
                             temperature=0.5,
-                            max_tokens=6000,
+                            max_tokens=MAX_TOKENS,
                             purpose=f"repair {cid}",
                         ).text
                 if src is None:
