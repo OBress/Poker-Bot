@@ -17,7 +17,8 @@ Session score (fitness is the mean over sessions; paired promotion tests use the
   style  mean d                                   (Δ_mixed)
   nash   −λ1 · max(0, −mean d − ε)                (losses to the baseline beyond tolerance)
   switch −λ2 · max(0, −mean d)                    (getting burned by switchers)
-and every session pays −λ3 · mean KL(σ ‖ σ_b) over the exploiter's decisions on the realized path
+The fitness also pays −λ_time · max(0, µs per decision − budget). Every session pays
+−λ3 · mean KL(σ ‖ σ_b) over the exploiter's decisions on the realized path
 (baseline probabilities floored at ``KL_FLOOR``).
 """
 
@@ -43,6 +44,7 @@ HANDS = 100
 SWITCH_EVERY = 25
 TEMPER = 0.7
 LAMBDA_NASH, LAMBDA_SWITCH, LAMBDA_KL, EPSILON = 1.0, 1.0, 0.02, 0.01
+TIME_BUDGET_US, LAMBDA_TIME = 2000.0, 1e-4  # fitness per µs per decision over the budget
 SPLITS = {"train": 1, "val_a": 2, "val_b": 3, "test": 4}
 KINDS = ("style",) * 14 + ("nash",) * 3 + ("switch",) * 3  # 70% / 15% / 15% of sessions
 BASELINE = Path("profiles/baseline-leduc-v1.json")
@@ -354,4 +356,5 @@ def summarize(results: list[dict]) -> dict:
     calls = sum(r["calls"] for r in results)
     out["us_per_call"] = sum(r["us"] * r["calls"] for r in results) / max(calls, 1)
     out["invalid"] = sum(r["invalid"] for r in results)
+    out["fitness"] -= LAMBDA_TIME * max(0.0, out["us_per_call"] - TIME_BUDGET_US)
     return out

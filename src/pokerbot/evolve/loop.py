@@ -84,6 +84,7 @@ class Task:
     make_evaluator: Callable[[], object]
     report: Callable[[object], str]
     table: Callable[[dict], str]
+    tune_n: int = 96  # train sessions used by the tuner
 
 
 def classifier_task(
@@ -151,7 +152,9 @@ def evolve(
                 k: min(max(given.get(k, v.default), v.low), v.high) for k, v in ns["PARAMS"].items()
             }
             ev.gate(src, start)
-            params, train_f = tune(ev, src, ns["PARAMS"], start, iters=tune_iters, seed=seed)
+            params, train_f = tune(
+                ev, src, ns["PARAMS"], start, n=task.tune_n, iters=tune_iters, seed=seed
+            )
             c = _candidate(
                 name,
                 src,
@@ -233,7 +236,7 @@ def evolve(
                     continue
                 try:
                     params, train_f = tune(
-                        ev, src, ns["PARAMS"], start, iters=tune_iters, seed=seed + g
+                        ev, src, ns["PARAMS"], start, n=task.tune_n, iters=tune_iters, seed=seed + g
                     )
                     val = ev.evaluate(src, params, "val_a")
                 except ProgramError as e:
@@ -333,4 +336,5 @@ def leduc_task(workers: int = 8) -> Task:
         make_evaluator=lambda: lt.LeducEvaluator(workers=workers),
         report=lt.report,
         table=lt.table,
+        tune_n=30,
     )

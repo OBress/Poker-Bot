@@ -146,8 +146,10 @@ Scoring (exact, duplicate: the same cards are played by your program and by the 
 d = your expected chips per hand - the baseline's against the same opponent.
 fitness = mean over sessions of: d vs style opponents (70% of sessions); -max(0, -d - 0.01)
 vs the Nash baseline itself (15%); -max(0, -d) vs players who switch style every 25 hands (15%);
-each minus 0.02 x mean KL(your distribution || baseline). A best response to each style would
-gain about 0.5-1.2 chips per hand over the baseline, so there is a lot of room; the risk is
+each minus 0.02 x mean KL(your distribution || baseline), minus 0.0001 per microsecond per
+decision above 2000 (keep policy fast: it runs ~15 times per hand). A best response to each
+style would gain about 0.5-1.2 chips per hand over the baseline, so there is a lot of room; the
+risk is
 losing to the baseline or to switchers by trusting wrong beliefs.
 
 Answer format: one line "IDEA: <one sentence>", then each changed block as
@@ -168,6 +170,12 @@ INSTRUCTIONS = [
     "gains against exploitable styles (detect changes in the opponent's behaviour).",
     "Target the style where the gain is smallest in the failure report.",
     "Simplify: remove anything that doesn't help, keeping the gains.",
+    "Stop losing to the Nash baseline: when the opponent's observed behaviour fits no style well "
+    "(it may be playing close to equilibrium), shrink the deviation toward the baseline.",
+    "Make the program faster without changing its decisions: cache per-hand computations in "
+    "self, avoid repeated loops over styles and cards.",
+    "Protect against style switchers: weight recent hands more when estimating the opponent's "
+    "frequencies and reduce deviation when recent behaviour contradicts the beliefs.",
 ]
 
 
