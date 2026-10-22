@@ -33,10 +33,16 @@ def _posteriors(source: str, params: dict, prof: StyleProfiles, sessions) -> lis
     return r["posteriors"]
 
 
-def evaluate_programs(programs: Sequence[tuple[str, str, dict]], fmt: str, profiles_path: Path,
-                      showdown_path: Path, real_path: Path | None) -> dict:  # fmt: skip
+def evaluate_programs(
+    programs: Sequence[tuple[str, str, dict]],
+    fmt: str,
+    profiles_path: Path,
+    showdown_path: Path,
+    real_path: Path | None,
+    equilibrium: Path | None = None,
+) -> dict:
     """``programs``: (name, source, params). Reads the test split and held-out players."""
-    prof = StyleProfiles.load(profiles_path, fmt, showdown_path)
+    prof = StyleProfiles.load(profiles_path, fmt, showdown_path, equilibrium)
     test = dataset.load(fmt, "test", allow_test=True)
     labels = [s["labels"] for s in test]
     real = {}

@@ -116,20 +116,39 @@ class StyleProfiles:
         return (z - self.f_mean) / self.f_std, s2 / self.f_std**2
 
     @staticmethod
-    def load(profiles_path: Path, fmt: str, showdown_path: Path | None = None) -> StyleProfiles:
+    def load(
+        profiles_path: Path,
+        fmt: str,
+        showdown_path: Path | None = None,
+        equilibrium_path: Path | None = None,
+    ) -> StyleProfiles:
+        """``equilibrium_path``: a measured baseline pseudo-style (``evolve.equilibrium``),
+        appended as the last style with its population share (the others scaled down)."""
         from pokerbot.archetypes.profiles import load_profiles
 
         prof = load_profiles(Path(profiles_path))["formats"][fmt]
         t = prof["transform"]
-        styles = prof["styles"]
+        styles = [dict(s) for s in prof["styles"]]
+        eq = None
+        if equilibrium_path:
+            eq = json.loads(Path(equilibrium_path).read_text(encoding="utf-8"))
+            total = sum(s["share"] for s in styles)
+            for s in styles:
+                s["share"] = s["share"] / total * (1 - eq["share"])
+            styles.append(eq)
         k = len(styles)
         sd = np.full((k, len(LINES), BUCKETS), 1.0 / BUCKETS)
         if showdown_path and Path(showdown_path).exists():
             doc = json.loads(Path(showdown_path).read_text(encoding="utf-8"))
             if fmt in doc["formats"]:
                 counts = np.array(doc["formats"][fmt]["counts"])
+                counts = np.concatenate([counts, np.zeros((k - len(counts), *counts.shape[1:]))])
                 tot = counts.sum(axis=2, keepdims=True)
                 sd = np.where(tot > 0, (counts + 0.5) / (tot + 0.5 * BUCKETS), sd)
+        if eq is not None:
+            c = np.array(eq["showdown_counts"])
+            tot = c.sum(axis=1, keepdims=True)
+            sd[-1] = np.where(tot > 0, (c + 0.5) / (tot + 0.5 * BUCKETS), 1.0 / BUCKETS)
         shares = np.array([s["share"] for s in styles])
         return StyleProfiles(
             names=tuple(s["name"] for s in styles),

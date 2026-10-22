@@ -93,9 +93,11 @@ def classifier_task(
     showdown_path: Path,
     workers: int = 8,
     data_root: Path | None = None,
+    equilibrium: Path | None = None,
 ) -> Task:
-    prof = StyleProfiles.load(profiles_path, fmt, showdown_path)
+    prof = StyleProfiles.load(profiles_path, fmt, showdown_path, equilibrium)
     kw = {"root": data_root} if data_root else {}
+    kw["equilibrium"] = equilibrium
     return Task(
         kind="evolve-classifier",
         template="classifier_v1",
@@ -124,8 +126,9 @@ def evolve_classifier(
     tune_iters: int = 8,
     max_calls: int = 400,
     data_root: Path | None = None,
+    equilibrium: Path | None = None,
 ) -> dict:
-    task = classifier_task(fmt, profiles_path, showdown_path, workers, data_root)
+    task = classifier_task(fmt, profiles_path, showdown_path, workers, data_root, equilibrium)
     return evolve(run, llm, task, seeds, generations, proposals, seed, tune_iters, max_calls)
 
 
