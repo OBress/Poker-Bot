@@ -33,6 +33,7 @@ def _run(
                 lambda: ns["Exploiter"](table, dict(params)),
                 leduc.SessionSpec(split, i),
                 oracle=oracle,
+                prior_only=prior_only,
             )
             out.append(r)
         return {"ok": True, "results": out}
