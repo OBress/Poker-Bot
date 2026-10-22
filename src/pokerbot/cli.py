@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import time
 
 
@@ -439,7 +440,7 @@ def cmd_evolve_exploiter_leduc(args: argparse.Namespace) -> None:
     data = {"baseline": Path(baseline[task_name])}
     for spec in args.seed_program or [f"programs/exploiter_{task_name}/seed.py"]:
         path, _, params_path = spec.partition(",")
-        name = Path(path).stem.split("-")[0]
+        name = re.sub(r"-\d{8}-\d{6}-.*$", "", Path(path).stem)  # drop the run id
         src = Path(path).read_text(encoding="utf-8")
         if params_path:
             doc = json.loads(Path(params_path).read_text(encoding="utf-8"))
@@ -586,7 +587,7 @@ def cmd_evolve_classifier(args: argparse.Namespace) -> None:
         "programs/classifier/seed_b.py",
     ]:
         path, _, params_path = spec.partition(",")
-        name = Path(path).stem.split("-")[0]
+        name = re.sub(r"-\d{8}-\d{6}-.*$", "", Path(path).stem)  # drop the run id
         src = Path(path).read_text(encoding="utf-8")
         if params_path:
             doc = json.loads(Path(params_path).read_text(encoding="utf-8"))
