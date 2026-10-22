@@ -140,7 +140,7 @@ Inputs:
 
 Scoring (duplicate: the same cards and opponents are played by your program and by the
 blueprint): d = your bb per hand - the blueprint's, reported in bb/100. fitness = mean over
-sessions of: d vs style opponents (70% of sessions); -max(0, -d - 2) vs the blueprint itself
+sessions of: d vs style opponents (70% of sessions); -5 x max(0, -d - 2) vs the blueprint itself
 (15%); -max(0, -d) vs players who switch style every 50 hands (15%); each minus 2 x mean
 KL(your distribution || baseline); minus 0.01 per microsecond per decision above 2000.
 Results are noisy (hands diverge once you deviate): prefer robust, well-founded deviations
@@ -159,6 +159,8 @@ INSTRUCTIONS = [
     "players who differ from their style are exploited correctly.",
     "Exploit only when confident and stay close to the baseline otherwise, including against "
     "the equilibrium baseline (last belief) and when beliefs are spread.",
+    "Stop losing to the blueprint itself (the last belief): every bb/100 lost there costs 5 in "
+    "fitness. Scale all deviations by (1 - beliefs[-1]) and by evidence, not just confidence.",
     "Improve postflop play: continuation bets, bluff-catching and value bets by street, using "
     "the styles' fold-to-c-bet and aggression rates.",
     "Improve preflop play: steals, 3-bets and defending against each style's opening, limping "

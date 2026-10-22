@@ -53,7 +53,9 @@ SWITCH_EVERY = 50
 BB = 100
 SPLITS = {"train": 1, "val_a": 2, "val_b": 3, "test": 4}
 KINDS = ("style",) * 14 + ("nash",) * 3 + ("switch",) * 3
-LAMBDA_NASH, LAMBDA_SWITCH, LAMBDA_KL, EPSILON = 1.0, 1.0, 2.0, 2.0  # bb/100 units
+# bb/100 units. LAMBDA_NASH was 1.0 in run 20261022-170121; at 1.0 (15% of sessions) losing
+# 10-20 bb/100 to the blueprint barely registered next to +60-80 vs styles, so it is now 5.0.
+LAMBDA_NASH, LAMBDA_SWITCH, LAMBDA_KL, EPSILON = 5.0, 1.0, 2.0, 2.0
 TIME_BUDGET_US, LAMBDA_TIME = 2000.0, 0.01
 KL_FLOOR = 1e-3
 
