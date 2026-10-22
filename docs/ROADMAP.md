@@ -223,7 +223,43 @@ Next: Track B heads-up classifier; the classifier is ready to feed the Phase 6 e
 **Exit:** champion classifier's accuracy-vs-hands curve beats the seed with significance on test
 seeds, and real-data transfer accuracy is reported.
 
-## Phase 6 — Exploit evolution
+## Phase 6 — Exploit evolution (Track A in progress: edge met, baseline loss not yet)
+
+Done on Leduc (Track A): harness (`evolve/leduc.py`, `leduc_task.py`), template
+`exploiter_leduc_v1`, seed `programs/exploiter_leduc/seed.py` (MATH §5.2 tilt), final evaluation
+with belief ablations (`evolve/leduc_final.py`). Sessions: 100 hands vs a sampled style player
+(70%), the Nash baseline itself (15%) or a style switcher (15%). Beliefs come from a frozen
+Bayesian classifier over the five styles. Every hand is scored exactly and in duplicate: the
+expected value over all action randomness for the exploiter and for the baseline with the same
+cards and opponent, so there is no card or action luck in d.
+
+Evolution: run 20261021-204914-evolve-exploiter-leduc (stopped in generation 3: candidates took
+~15 min each) promoted g01-7 and then g02-5 (p 2e-17 on val_a, 4e-16 on val_b), which infers the
+opponent's likely cards per style and looks one bet ahead (fold equity, pot odds, value when
+called). Run 20261021-223501-evolve-exploiter-leduc (8 generations from g02-5, time budget and
+safety instructions added) promoted nothing: several candidates passed val_a but not val_b.
+Champion: `programs/exploiter_leduc/champion-20261021-204914-evolve-exploiter-leduc.py`.
+
+Final evaluation on 200 test sessions (run 20261022-162921-eval-exploiter-leduc), chips per hand
+over the Nash baseline (Nash itself already wins 0.11–0.49 against these styles):
+
+| Program, beliefs | vs style players | vs the Nash baseline | vs switchers |
+|---|---|---|---|
+| champion, Bayesian | **+0.527 [+0.493, +0.561]** | **−0.143 [−0.176, −0.106]** | +0.333 [+0.282, +0.386] |
+| champion, oracle labels | +0.523 [+0.487, +0.559] | 0.000 | +0.465 [+0.418, +0.516] |
+| champion, no classifier | 0.000 | 0.000 | 0.000 |
+| seed, Bayesian | +0.136 [+0.112, +0.162] | 0.000 [−0.021, +0.022] | +0.098 [+0.071, +0.125] |
+
+Per style (champion): nit +0.53, calling station +0.59, maniac +0.71, fit-or-fold +0.25,
+bluffer +0.56 (best response ceiling 0.49–1.16). Champion vs seed, paired session score
++0.249 [+0.215, +0.285], p = 6e-31.
+
+Exit status for Track A: the edge is large and significant, switchers don't hurt, but the
+champion loses 0.143 chips/hand to the Nash baseline itself (tolerance 0.01). The ablations show
+why: with oracle labels it loses nothing, so the loss comes from the frozen classifier, which
+can only choose among the five exploitable styles and labels an equilibrium player as one of
+them. Next: add an "equilibrium / none of these" hypothesis to the beliefs (Stage 3 of
+EVOLUTION.md §6, classifier and exploiter together), re-evaluate, then Track B heads-up.
 
 - Hand-written seed exploiter (baseline + simple per-style adjustments, confidence-scaled).
 - Same evolution loop with exploit fitness (Δ bb/100 minus robustness penalties).
