@@ -341,3 +341,19 @@ def leduc_task(workers: int = 8) -> Task:
         table=lt.table,
         tune_n=30,
     )
+
+
+def hu_task(workers: int = 8) -> Task:
+    from pokerbot.evolve import hu_task as ht
+
+    return Task(
+        kind="evolve-exploiter",
+        template=ht.TEMPLATE,
+        system=ht.SYSTEM,
+        instructions=ht.INSTRUCTIONS,
+        indent=ht.INDENT,
+        make_evaluator=lambda: ht.HUEvaluator(workers=workers),
+        report=ht.report,
+        table=ht.table,
+        tune_n=120,
+    )

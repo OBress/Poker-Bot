@@ -429,13 +429,15 @@ def cmd_evolve_exploiter_leduc(args: argparse.Namespace) -> None:
     from dataclasses import replace
     from pathlib import Path
 
-    from pokerbot.evolve.loop import evolve, leduc_task
+    from pokerbot.evolve.loop import evolve, hu_task, leduc_task
     from pokerbot.llm import LLMClient, LLMSettings
     from pokerbot.track import Run
 
     seeds: dict = {}
-    data = {"baseline": Path("profiles/baseline-leduc-v1.json")}
-    for spec in args.seed_program or ["programs/exploiter_leduc/seed.py"]:
+    task_name = getattr(args, "task", "leduc")
+    baseline = {"leduc": "profiles/baseline-leduc-v1.json", "hu": "profiles/blueprint-hu-v1.npz"}
+    data = {"baseline": Path(baseline[task_name])}
+    for spec in args.seed_program or [f"programs/exploiter_{task_name}/seed.py"]:
         path, _, params_path = spec.partition(",")
         name = Path(path).stem.split("-")[0]
         src = Path(path).read_text(encoding="utf-8")
@@ -447,7 +449,7 @@ def cmd_evolve_exploiter_leduc(args: argparse.Namespace) -> None:
         data[f"seed_{name}"] = Path(path)
     config = {k: v for k, v in vars(args).items() if k != "func"}
     with Run.start(
-        "evolve-exploiter-leduc",
+        f"evolve-exploiter-{task_name}",
         kind="evolve-exploiter",
         config=config,
         seeds={"loop": args.seed},
@@ -457,7 +459,7 @@ def cmd_evolve_exploiter_leduc(args: argparse.Namespace) -> None:
         out = evolve(
             run,
             llm,
-            leduc_task(args.workers),
+            {"leduc": leduc_task, "hu": hu_task}[task_name](args.workers),
             seeds,
             args.generations,
             args.proposals,
@@ -868,7 +870,22 @@ def main(argv: list[str] | None = None) -> None:
     el.add_argument("--workers", type=int, default=8)
     el.add_argument("--seed", type=int, default=0)
     el.add_argument("--out-dir", default="programs/exploiter_leduc")
-    el.set_defaults(func=cmd_evolve_exploiter_leduc)
+    el.set_defaults(func=cmd_evolve_exploiter_leduc, task="leduc")
+    eh = evo.add_parser("exploiter-hu", help="evolve the heads-up hold'em exploiter (Track B)")
+    eh.add_argument(
+        "--seed-program",
+        action="append",
+        default=None,
+        help="program.py[,params.json] to start from (repeatable)",
+    )
+    eh.add_argument("--generations", type=int, default=8)
+    eh.add_argument("--proposals", type=int, default=6)
+    eh.add_argument("--tune-iters", type=int, default=2)
+    eh.add_argument("--max-calls", type=int, default=150)
+    eh.add_argument("--workers", type=int, default=8)
+    eh.add_argument("--seed", type=int, default=0)
+    eh.add_argument("--out-dir", default="programs/exploiter_hu")
+    eh.set_defaults(func=cmd_evolve_exploiter_leduc, task="hu")
 
     xl = evo.add_parser("eval-exploiter-leduc", help="final Leduc exploiter evaluation (test)")
     xl.add_argument(

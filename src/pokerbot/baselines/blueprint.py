@@ -85,12 +85,16 @@ def abstract_state(state: DecisionState) -> hunl.State | None:
     return s
 
 
+MENU = "fc123a"  # fold, check/call, bet/raise 33%, 75%, 125% of the pot, all-in
+
+
 class BlueprintPolicy:
     buyin_bb = 100.0
 
     def __init__(self, path: Path, seed: int) -> None:
         self.path = str(path)
         self.table, self.edges, self.meta = _load(self.path)
+        self.seed = seed
         self.rng = np.random.default_rng(seed)
         self.fallback = HandStrengthBot()
         self.lookups = 0
@@ -117,6 +121,33 @@ class BlueprintPolicy:
         p = probs[: len(acts)]
         p = p / p.sum() if p.sum() > 0 else np.full(len(acts), 1 / len(acts))
         return self._real(state, acts[int(self.rng.choice(len(acts), p=p))])
+
+    def menu_distribution(self, state: DecisionState) -> np.ndarray:
+        """The blueprint's probabilities over ``MENU`` (fold, check/call, bet 33/75/125%,
+        all-in) at this decision; zeros for actions the abstraction doesn't allow here. Unseen
+        spots give the hand-strength fallback's action as a one-hot. Does not touch the RNG,
+        so ``act`` (the frozen baseline's play) is unchanged."""
+        out = np.zeros(len(MENU))
+        s = abstract_state(state)
+        probs = None
+        if s is not None and s.to_act == (0 if state.seat == state.button else 1):
+            b = hunl.bucket(state.hole, state.board, int(state.street), self.edges)
+            probs = self.table.get(hunl.infoset(s, b))
+        if probs is None:
+            a = self.fallback.act(state)
+            if a.type == ActionType.FOLD:
+                out[0] = 1.0
+            elif a.type == ActionType.CHECK_CALL:
+                out[1] = 1.0
+            else:
+                out[MENU.index("2")] = 1.0
+            return out
+        acts = hunl.legal(s)
+        p = probs[: len(acts)]
+        p = p / p.sum() if p.sum() > 0 else np.full(len(acts), 1 / len(acts))
+        for code, prob in zip(acts, p, strict=True):
+            out[MENU.index(code)] += prob
+        return out
 
     @staticmethod
     def _real(state: DecisionState, a: str) -> Action:

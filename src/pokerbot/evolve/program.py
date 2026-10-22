@@ -19,7 +19,11 @@ import re
 from pathlib import Path
 
 TEMPLATES = Path(__file__).with_name("templates")
-CLASS_OF = {"classifier_v1": "Classifier", "exploiter_leduc_v1": "Exploiter"}
+CLASS_OF = {
+    "classifier_v1": "Classifier",
+    "exploiter_leduc_v1": "Exploiter",
+    "exploiter_hu_v1": "Exploiter",
+}
 # A block body is the whole lines between its marker line and the END line. Both are anchored at
 # line starts, so an empty block can't run on into the next block's END marker.
 _BLOCK = re.compile(

@@ -37,6 +37,7 @@ __all__ = [
     "LINES", "BUCKETS", "STRENGTH_EDGES", "ActionType", "Street", "Event", "HandStart",
     "BlindPosted", "PlayerAction", "BoardDealt", "Showdown", "Muck", "HandEnd", "Param", "param",
     "SeatFeatures", "StyleProfiles", "LeducState", "HandRecord", "OpponentFeatures", "StyleTable",
+    "MENU_NAMES", "HUState", "HUHandRecord",
 ]  # fmt: skip
 
 
@@ -230,3 +231,44 @@ class StyleTable:
     @property
     def k(self) -> int:
         return len(self.names)
+
+
+# ---------------------------------------------------------------- heads-up hold'em (Track B)
+
+MENU_NAMES = ("fold", "call", "bet33", "bet75", "bet125", "allin")
+
+
+@dataclass(frozen=True)
+class HUState:
+    """The exploiter's decision in heads-up no-limit hold'em. Amounts are in big blinds.
+    ``button``: the exploiter is the button (posts the small blind, acts first preflop and last
+    after). ``strength``: preflop 1 - percentile of the hand (1 = AA, 0 = worst); after the flop,
+    equity against one random hand. ``legal[i]`` says whether ``MENU_NAMES[i]`` is allowed (call
+    means check when nothing is to call). ``actions``: this hand so far as (street, "me"/"opp",
+    "f"/"c"/"r", street total bet after the action in bb); streets 0 preflop .. 3 river."""
+
+    street: int
+    button: bool
+    hole: tuple[int, int]
+    board: tuple[int, ...]
+    strength: float
+    pot: float
+    to_call: float
+    my_stack: float
+    opp_stack: float
+    legal: tuple[bool, ...]
+    actions: tuple[tuple[int, str, str, float], ...]
+
+
+@dataclass(frozen=True)
+class HUHandRecord:
+    """A finished heads-up hand as the exploiter saw it: ``payoff`` (bb, the exploiter's),
+    ``opp_cards`` if the opponent showed at showdown (else None), the final ``board`` and the
+    hand's ``actions`` in the ``HUState`` format."""
+
+    button: bool
+    hole: tuple[int, int]
+    board: tuple[int, ...]
+    opp_cards: tuple[int, int] | None
+    actions: tuple[tuple[int, str, str, float], ...]
+    payoff: float
