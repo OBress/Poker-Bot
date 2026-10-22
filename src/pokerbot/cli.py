@@ -497,8 +497,9 @@ def cmd_evolve_eval_exploiter_leduc(args: argparse.Namespace) -> None:
         )
         data[f"program_{name}"] = Path(path)
     config = {k: v for k, v in vars(args).items() if k != "func"}
-    with Run.start("eval-exploiter-leduc", kind="eval", config=config, data=data) as run:
-        r = evaluate(programs, workers=args.workers)
+    name = "eval-exploiter-leduc" + ("" if args.split == "test" else f"-{args.split}")
+    with Run.start(name, kind="eval", config=config, data=data) as run:
+        r = evaluate(programs, workers=args.workers, split=args.split)
         run.save_artifact("evaluation.json", r)
         for name, modes in r["programs"].items():
             for mode, e in modes.items():
@@ -826,6 +827,7 @@ def main(argv: list[str] | None = None) -> None:
         help="name,program.py,params.json (params may be empty; first vs second)",
     )
     xl.add_argument("--workers", type=int, default=8)
+    xl.add_argument("--split", default="test", choices=["val_a", "val_b", "test"])
     xl.set_defaults(func=cmd_evolve_eval_exploiter_leduc)
 
     ec = evo.add_parser("classifier", help="evolve the style classifier with the LLM")

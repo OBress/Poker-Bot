@@ -43,6 +43,8 @@ GAME = LEDUC
 HANDS = 100
 SWITCH_EVERY = 25
 TEMPER = 0.7
+EQUILIBRIUM_PRIOR = 0.15  # beliefs v2: prior of "plays the Nash strategy" (15% of sessions)
+BELIEFS_VERSION = 2
 LAMBDA_NASH, LAMBDA_SWITCH, LAMBDA_KL, EPSILON = 1.0, 1.0, 0.02, 0.01
 TIME_BUDGET_US, LAMBDA_TIME = 2000.0, 1e-4  # fitness per µs per decision over the budget
 SPLITS = {"train": 1, "val_a": 2, "val_b": 3, "test": 4}
@@ -112,26 +114,47 @@ def opponents(spec: SessionSpec) -> tuple[list[Strategy], list[int | None]]:
 
 
 class Beliefs:
-    """Frozen Bayesian style classifier for Leduc (the exploiter's input, not evolved here)."""
+    """Frozen Bayesian style classifier for Leduc (the exploiter's input, not evolved here).
 
-    def __init__(self, table: StyleTable) -> None:
-        self.log = np.log(table.shares).astype(float)
-        self.ll = np.zeros(table.k)
+    Hypotheses: the K styles' typical players and, with ``equilibrium`` (beliefs v2), one more:
+    the opponent plays the Nash strategy, with prior ``EQUILIBRIUM_PRIOR``. Programs still get K
+    numbers: probability on the equilibrium hypothesis is spread over the styles at their
+    population shares, so evidence of equilibrium play lowers the beliefs' confidence instead
+    of pushing them onto the nearest exploitable style (v1 had no such option and labelled
+    Nash play as a style)."""
 
-    def posterior(self) -> np.ndarray:
+    def __init__(self, table: StyleTable, equilibrium: bool = True) -> None:
+        self.shares = np.asarray(table.shares, dtype=float)
+        self.k = table.k
+        self.equilibrium = equilibrium
+        if equilibrium:
+            self.log = np.log(np.append(self.shares * (1 - EQUILIBRIUM_PRIOR), EQUILIBRIUM_PRIOR))
+        else:
+            self.log = np.log(self.shares)
+        self.ll = np.zeros(len(self.log))
+
+    def full(self) -> np.ndarray:
+        """Posterior over all hypotheses (styles, then equilibrium if enabled)."""
         z = self.log + TEMPER * self.ll
         e = np.exp(z - z.max())
         return e / e.sum()
 
+    def posterior(self) -> np.ndarray:
+        p = self.full()
+        if not self.equilibrium:
+            return p
+        return p[: self.k] + p[self.k] * self.shares
+
     def update(self, rec: HandRecord) -> None:
         opp = 1 - rec.seat
         cards = [rec.opp_card] if rec.opp_card is not None else range(GAME.ranks)
+        models = list(_centers()) + ([_nash()] if self.equilibrium else [])
         lik = np.zeros(len(self.ll))
         for y in cards:
             w = _card_weight(rec.card, y, rec.public)
             if w <= 0:
                 continue
-            for k, strat in enumerate(_centers()):
+            for k, strat in enumerate(models):
                 lik[k] += w * _actions_prob(strat, y, rec.public, rec.history, opp)
         self.ll += np.log(np.maximum(lik, 1e-12))
 

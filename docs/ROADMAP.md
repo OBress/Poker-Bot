@@ -223,7 +223,7 @@ Next: Track B heads-up classifier; the classifier is ready to feed the Phase 6 e
 **Exit:** champion classifier's accuracy-vs-hands curve beats the seed with significance on test
 seeds, and real-data transfer accuracy is reported.
 
-## Phase 6 — Exploit evolution (Track A in progress: edge met, baseline loss not yet)
+## Phase 6 — Exploit evolution (Track A ✅ on Leduc; Track B next)
 
 Done on Leduc (Track A): harness (`evolve/leduc.py`, `leduc_task.py`), template
 `exploiter_leduc_v1`, seed `programs/exploiter_leduc/seed.py` (MATH §5.2 tilt), final evaluation
@@ -254,12 +254,27 @@ Per style (champion): nit +0.53, calling station +0.59, maniac +0.71, fit-or-fol
 bluffer +0.56 (best response ceiling 0.49–1.16). Champion vs seed, paired session score
 +0.249 [+0.215, +0.285], p = 6e-31.
 
-Exit status for Track A: the edge is large and significant, switchers don't hurt, but the
-champion loses 0.143 chips/hand to the Nash baseline itself (tolerance 0.01). The ablations show
-why: with oracle labels it loses nothing, so the loss comes from the frozen classifier, which
-can only choose among the five exploitable styles and labels an equilibrium player as one of
-them. Next: add an "equilibrium / none of these" hypothesis to the beliefs (Stage 3 of
-EVOLUTION.md §6, classifier and exploiter together), re-evaluate, then Track B heads-up.
+With the first beliefs (v1) the champion lost 0.143 chips/hand to the Nash baseline itself
+(tolerance 0.01), but nothing with oracle labels: the frozen classifier could only choose among
+the five exploitable styles and labelled an equilibrium player as one of them. Beliefs v2 add a
+sixth hypothesis, "plays the Nash strategy" (prior 0.15, its share of sessions); its probability
+is spread over the styles at their population shares, so programs see less confident beliefs
+and the program contract is unchanged. Checked on validation first (runs
+20261022-163632-eval-exploiter-leduc-val_a and 20261022-163801-…-val_b: vs Nash −0.002 and
+−0.008, edge unchanged), then one test run with the same champion, no re-evolution
+(run 20261022-163935-eval-exploiter-leduc):
+
+| Beliefs v2, test | vs style players | vs the Nash baseline | vs switchers |
+|---|---|---|---|
+| champion | **+0.526 [+0.493, +0.559]** | **+0.003 [−0.004, +0.011]** | +0.337 [+0.290, +0.386] |
+| seed | +0.134 [+0.111, +0.159] | +0.001 [−0.000, +0.003] | +0.092 [+0.065, +0.118] |
+
+Champion vs seed, paired session score +0.268 [+0.239, +0.300], p = 9e-40. **Track A exit
+met:** the edge's CI excludes zero, and the losses to the baseline and to switchers are within
+tolerance. Note: the v2 change was motivated by the v1 test-set ablation (the test set was used
+twice for this champion); the fix is a structural hypothesis, not a tuned number, and was
+checked on both validation batches before the second test run.
+Next: Track B (heads-up hold'em, blueprint baseline, hold'em classifier).
 
 - Hand-written seed exploiter (baseline + simple per-style adjustments, confidence-scaled).
 - Same evolution loop with exploit fitness (Δ bb/100 minus robustness penalties).

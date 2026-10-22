@@ -26,14 +26,21 @@ def _ci(v: np.ndarray, boots: int = 4000, seed: int = 0) -> list[float]:
     return np.percentile(v[idx].mean(axis=1), [2.5, 97.5]).tolist()
 
 
-def evaluate(programs: Sequence[tuple[str, str, dict]], workers: int = 8) -> dict:
-    out: dict = {"sessions": leduc_task_sizes()["test"], "programs": {}}
+def evaluate(
+    programs: Sequence[tuple[str, str, dict]], workers: int = 8, split: str = "test"
+) -> dict:
+    out: dict = {
+        "split": split,
+        "sessions": leduc_task_sizes()[split],
+        "beliefs_version": leduc.BELIEFS_VERSION,
+        "programs": {},
+    }
     scores: dict[str, np.ndarray] = {}
     for mode, kw in MODES.items():
         ev = LeducEvaluator(workers=workers, allow_test=True, **kw)
         try:
             for name, source, params in programs:
-                r = ev.evaluate(source, params, "test")
+                r = ev.evaluate(source, params, split)
                 res = r.posteriors
                 entry: dict = {"fitness": r.metrics["fitness"], "kl": r.metrics["kl"]}
                 for kind in ("style", "nash", "switch"):
