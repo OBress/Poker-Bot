@@ -89,16 +89,26 @@ INSTRUCTIONS = [
 ]
 
 
-def _table(metrics: dict) -> str:
+def classifier_table(metrics: dict) -> str:
     rows = ["checkpoint | log loss | accuracy | Brier | ECE", "---|---|---|---|---"]
     for t in (10, 25, 50, 100, 200):
-        rows.append(f"{t} | {metrics[f'logloss@{t}']:.3f} | {metrics[f'accuracy@{t}']:.3f} | "
-                    f"{metrics[f'brier@{t}']:.3f} | {metrics[f'ece@{t}']:.3f}")  # fmt: skip
+        rows.append(
+            f"{t} | {metrics[f'logloss@{t}']:.3f} | {metrics[f'accuracy@{t}']:.3f} | "
+            f"{metrics[f'brier@{t}']:.3f} | {metrics[f'ece@{t}']:.3f}"
+        )
     rows.append(f"fitness {metrics['fitness']:.4f}; {metrics['us_per_call']:.0f} us per call")
     return "\n".join(rows)
 
 
-def build(parent: dict, report: str, history: list[str], instruction: str) -> list[dict]:
+def build(
+    parent: dict,
+    report: str,
+    history: list[str],
+    instruction: str,
+    system: str = SYSTEM,
+    table=None,
+) -> list[dict]:
+    table = table or classifier_table
     user = f"""Parent program:
 ```python
 {parent["source"]}```
@@ -106,7 +116,7 @@ def build(parent: dict, report: str, history: list[str], instruction: str) -> li
 Tuned PARAMS of the parent: {parent["params"]}
 
 Validation scores of the parent:
-{_table(parent["val"])}
+{table(parent["val"])}
 
 Failure report:
 {report}
@@ -115,33 +125,46 @@ Recent attempts (idea -> change in validation fitness):
 {chr(10).join(history[-12:]) or "(none yet)"}
 
 Instruction for this attempt: {instruction}"""
-    return [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}]
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
 def repair(messages: list[dict], answer: str, error: str) -> list[dict]:
-    return [*messages, {"role": "assistant", "content": answer}, {"role": "user", "content":
-            f"The program was rejected:\n{error}\nFix it. Answer in the same format."}]  # fmt: skip
+    return [
+        *messages,
+        {"role": "assistant", "content": answer},
+        {
+            "role": "user",
+            "content": f"The program was rejected:\n{error}\nFix it. Answer in the same format.",
+        },
+    ]
 
 
 _IDEA = re.compile(r"IDEA:\s*(.+)")
 _BLOCKS = re.compile(r"<<<BLOCK (\w+)>>>\n(.*?)<<<END BLOCK>>>", re.S)
-_INDENT = {"params": "", "helpers": "", "state": " " * 8, "observe": " " * 8, "posterior": " " * 8}
+CLASSIFIER_INDENT = {
+    "params": "",
+    "helpers": "",
+    "state": " " * 8,
+    "observe": " " * 8,
+    "posterior": " " * 8,
+}
 
 
-def apply_answer(parent_source: str, answer: str) -> tuple[str, str]:
+def apply_answer(parent_source: str, answer: str, indent: dict | None = None) -> tuple[str, str]:
     """(new source, idea). Raises ``ProgramError('format')`` if no usable block is found."""
+    indent = indent or CLASSIFIER_INDENT
     blocks = _BLOCKS.findall(answer)
     if not blocks:
         raise program.ProgramError("format", "no <<<BLOCK name>>> ... <<<END BLOCK>>> found")
     source = parent_source
     for name, body in blocks:
-        if name not in _INDENT:
+        if name not in indent:
             raise program.ProgramError("format", f"unknown block {name}")
         body = body.strip("\n")
         if body.lstrip().startswith("```"):
             body = re.sub(r"^\s*```\w*\n|\n?```\s*$", "", body)
         body = textwrap.dedent(body)
-        ind = _INDENT[name]
+        ind = indent[name]
         body = "\n".join(ind + line if line.strip() else "" for line in body.split("\n"))
         source = program.replace_block(source, name, body)
     m = _IDEA.search(answer)

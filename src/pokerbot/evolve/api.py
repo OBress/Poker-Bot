@@ -36,7 +36,7 @@ from pokerbot.stats.showdown import BUCKETS, LINES, STRENGTH_EDGES
 __all__ = [
     "LINES", "BUCKETS", "STRENGTH_EDGES", "ActionType", "Street", "Event", "HandStart",
     "BlindPosted", "PlayerAction", "BoardDealt", "Showdown", "Muck", "HandEnd", "Param", "param",
-    "SeatFeatures", "StyleProfiles",
+    "SeatFeatures", "StyleProfiles", "LeducState", "HandRecord", "OpponentFeatures", "StyleTable",
 ]  # fmt: skip
 
 
@@ -143,3 +143,71 @@ class StyleProfiles:
             beta_b=_ro([[s["beta"][f][1] for f in t.features] for s in styles]),
             showdown=_ro(sd),
         )  # fmt: skip
+
+
+# ------------------------------------------------------------------------- Leduc (Track A)
+
+
+@dataclass(frozen=True)
+class LeducState:
+    """The exploiter's decision point in Leduc poker (``games.limit.LEDUC``). Cards are ranks
+    0 (J), 1 (Q), 2 (K); ``public`` is None before the flop. ``history`` holds one string per
+    round from c (check/call), r (bet/raise), f (fold). ``legal`` lists the allowed actions in
+    order (the output distribution follows it). ``seat`` 0 acts first in every round.
+    ``put`` = chips each seat has put in, ``to_call`` = chips needed to call."""
+
+    seat: int
+    card: int
+    public: int | None
+    history: tuple[str, ...]
+    legal: str
+    put: tuple[int, int]
+    to_call: int
+    bet_size: int  # fixed bet/raise size of the current round (2, then 4)
+
+
+@dataclass(frozen=True)
+class HandRecord:
+    """A finished Leduc hand as the exploiter saw it. ``opp_card`` is known only if the
+    opponent's card was shown at showdown (else None). ``payoff`` is the exploiter's net chips."""
+
+    seat: int
+    card: int
+    public: int | None
+    history: tuple[str, ...]
+    opp_card: int | None
+    payoff: float
+
+
+@dataclass(frozen=True)
+class OpponentFeatures:
+    """Public counts of the opponent's actions over the session so far.
+    ``counts[(round, situation, action)]`` with round 0/1, situation "open" (no bet to call)
+    or "facing" (a bet to call), action "c", "r" or "f". ``shown[(round_line, card)]`` counts
+    cards the opponent showed at showdown by its final-round line (e.g. "rc"). ``hands``."""
+
+    hands: int
+    counts: Mapping[tuple[int, str, str], int]
+    shown: Mapping[tuple[str, int], int]
+
+    def rate(self, rnd: int, situation: str, action: str, prior: float = 1.0) -> float:
+        """Smoothed frequency of an action in a situation (uniform prior over actions)."""
+        acts = ("c", "r", "f") if situation == "facing" else ("c", "r")
+        tot = sum(self.counts.get((rnd, situation, a), 0) for a in acts)
+        x = self.counts.get((rnd, situation, action), 0)
+        return (x + prior / len(acts)) / (tot + prior)
+
+
+@dataclass(frozen=True)
+class StyleTable:
+    """The K Leduc opponent styles (``games.styles``): ``names``; ``centers`` (K, 3, 3) =
+    [bet, call, raise] × strength [weak, medium, strong] probabilities of each style's typical
+    player (players vary around it); ``shares`` (K) how often each style is met."""
+
+    names: tuple[str, ...]
+    centers: np.ndarray
+    shares: np.ndarray
+
+    @property
+    def k(self) -> int:
+        return len(self.names)
