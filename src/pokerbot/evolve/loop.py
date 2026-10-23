@@ -93,9 +93,11 @@ def classifier_task(
     showdown_path: Path,
     workers: int = 8,
     data_root: Path | None = None,
+    equilibrium: Path | None = None,
 ) -> Task:
-    prof = StyleProfiles.load(profiles_path, fmt, showdown_path)
+    prof = StyleProfiles.load(profiles_path, fmt, showdown_path, equilibrium)
     kw = {"root": data_root} if data_root else {}
+    kw["equilibrium"] = equilibrium
     return Task(
         kind="evolve-classifier",
         template="classifier_v1",
@@ -124,8 +126,9 @@ def evolve_classifier(
     tune_iters: int = 8,
     max_calls: int = 400,
     data_root: Path | None = None,
+    equilibrium: Path | None = None,
 ) -> dict:
-    task = classifier_task(fmt, profiles_path, showdown_path, workers, data_root)
+    task = classifier_task(fmt, profiles_path, showdown_path, workers, data_root, equilibrium)
     return evolve(run, llm, task, seeds, generations, proposals, seed, tune_iters, max_calls)
 
 
@@ -337,4 +340,20 @@ def leduc_task(workers: int = 8) -> Task:
         report=lt.report,
         table=lt.table,
         tune_n=30,
+    )
+
+
+def hu_task(workers: int = 8) -> Task:
+    from pokerbot.evolve import hu_task as ht
+
+    return Task(
+        kind="evolve-exploiter",
+        template=ht.TEMPLATE,
+        system=ht.SYSTEM,
+        instructions=ht.INSTRUCTIONS,
+        indent=ht.INDENT,
+        make_evaluator=lambda: ht.HUEvaluator(workers=workers),
+        report=ht.report,
+        table=ht.table,
+        tune_n=120,
     )

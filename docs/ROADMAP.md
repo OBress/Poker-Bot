@@ -223,7 +223,7 @@ Next: Track B heads-up classifier; the classifier is ready to feed the Phase 6 e
 **Exit:** champion classifier's accuracy-vs-hands curve beats the seed with significance on test
 seeds, and real-data transfer accuracy is reported.
 
-## Phase 6 — Exploit evolution (Track A ✅ on Leduc; Track B next)
+## Phase 6 — Exploit evolution ✅ (Track A on Leduc, Track B heads-up hold'em)
 
 Done on Leduc (Track A): harness (`evolve/leduc.py`, `leduc_task.py`), template
 `exploiter_leduc_v1`, seed `programs/exploiter_leduc/seed.py` (MATH §5.2 tilt), final evaluation
@@ -274,7 +274,50 @@ met:** the edge's CI excludes zero, and the losses to the baseline and to switch
 tolerance. Note: the v2 change was motivated by the v1 test-set ablation (the test set was used
 twice for this champion); the fix is a structural hypothesis, not a tuned number, and was
 checked on both validation batches before the second test run.
-Next: Track B (heads-up hold'em, blueprint baseline, hold'em classifier).
+
+**Track B (heads-up hold'em, blueprint baseline).** Lesson from Track A applied up front: the
+blueprint is measured as an "Equilibrium (blueprint)" pseudo-style (run
+20261022-164955-equilibrium-hu: 200 sessions × 1000 hands vs population bots; VPIP 64%, PFR 39%,
+3-bet 18%; `profiles/equilibrium-hu-v1.json`) and added to the heads-up styles. Heads-up
+classifier data with 15% blueprint seats (run 20261022-165210-clf-data-hu); the short-handed
+champion classifier tuned for heads-up is frozen as the exploiter's belief source
+(`programs/classifier_hu/`, run 20261022-165422-evolve-classifier-hu; 92% accuracy at 200 hands,
+the blueprint recognized with 85% probability after 100 hands).
+
+Harness (`evolve/hu.py`, `hu_task.py`): sessions of 200 hands vs a style bot (70%), the blueprint
+(15%) or a switcher (15%), each played twice with the same decks and cloned opponents (exploiter,
+then blueprint), all-in luck removed. The program gets the blueprint's distribution over the
+menu (fold, call, 33/75/125% pot, all-in) and outputs its own; the harness masks, samples and
+maps it to real sizes. Hands diverge once the exploiter deviates (session sd ~90 bb/100), so
+splits are large (train 120, val 300 + 300, test 400 sessions).
+
+Evolution: run 20261022-170121-evolve-exploiter-hu (λ_nash = 1; stopped in gen 5) promoted g01-1
+(+59 vs styles, −12 vs the blueprint on val). Every strong candidate lost to the blueprint, so
+λ_nash was raised to 5 and run 20261022-230930-evolve-exploiter-hu-2 (a duplicate launch,
+…-230930-…-hu, was stopped) promoted g05-2 (p 0.003 on val_a, 2e-5 on val_b): EV-based tilting
+with size-dependent fold equity per style and trapping hyper-aggressive players.
+Champion: `programs/exploiter_hu/champion-20261022-230930-evolve-exploiter-hu-2.py`.
+
+Final evaluation, 400 test sessions (run 20261023-162556-eval-exploiter-hu), bb/100 over the
+blueprint (which itself already wins +21 to +37 against these styles):
+
+| Champion, beliefs | vs style bots | vs the blueprint | vs switchers |
+|---|---|---|---|
+| frozen classifier | **+118.0 [+104.2, +132.0]** | +12.1 [−11.7, +37.4] | +117.7 [+84.6, +154.7] |
+| oracle labels | +124.3 [+109.4, +138.5] | 0.0 | +148.6 [+118.9, +177.7] |
+| prior only | +114.1 [+100.1, +127.8] | +13.8 [−12.0, +39.8] | +130.8 [+101.5, +161.4] |
+| seed, frozen classifier | +8.6 [−3.1, +20.6] | +3.2 [−14.5, +20.6] | −6.7 [−31.0, +19.1] |
+
+Per style (champion): hyper-aggressor +102, limper +157, semi-passive +95, regular +117.
+Champion vs seed, paired session score +76 [+60, +92], p = 9e-20. The test split has only 60
+blueprint sessions, so a dedicated check on 600 fresh test-range seeds (run
+20261023-163016-eval-exploiter-hu-safety): **+2.5 bb/100 [−5.9, +10.6] vs the blueprint**.
+**Track B exit met:** the edge's CI excludes zero, and against the baseline itself the point
+estimate is a small gain (any loss is below 6 bb/100 with 95% confidence); switchers don't
+hurt. The edge barely depends on the classifier (prior-only beliefs keep +114): the program
+mostly exploits from the opponent's own counts. Caveat: opponents are the calibrated bots;
+real-player transfer of the exploiter is untested.
+
 
 - Hand-written seed exploiter (baseline + simple per-style adjustments, confidence-scaled).
 - Same evolution loop with exploit fitness (Δ bb/100 minus robustness penalties).

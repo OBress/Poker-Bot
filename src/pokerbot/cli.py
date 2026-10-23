@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import time
 
 
@@ -343,8 +344,15 @@ def cmd_evolve_build_data(args: argparse.Namespace) -> None:
                    data={"bots": Path(args.bots)}) as run:  # fmt: skip
         sizes = {}
         for split in args.split:
-            path = dataset.build(Path(args.bots), args.format, split, args.sessions,
-                                 workers=args.workers)  # fmt: skip
+            path = dataset.build(
+                Path(args.bots),
+                args.format,
+                split,
+                args.sessions,
+                workers=args.workers,
+                equilibrium=args.equilibrium,
+            )
+
             sizes[split] = path.stat().st_size
             run.log_metric(f"{split}/sessions", args.sessions)
             print(f"{split}: {path} ({sizes[split] / 1e6:.1f} MB)", flush=True)
@@ -395,8 +403,10 @@ def cmd_evolve_eval(args: argparse.Namespace) -> None:
     config = {k: v for k, v in vars(args).items() if k != "func"}
     with Run.start(f"eval-classifier-{args.format}", kind="eval", config=config,
                    data=data) as run:  # fmt: skip
+        eq = Path(args.equilibrium) if args.equilibrium else None
+        real = Path(args.real) if args.format == "sh" else None  # real sessions exist for sh
         r = evaluate_programs(programs, args.format, Path(args.profiles), Path(args.showdowns),
-                              Path(args.real))  # fmt: skip
+                              real, equilibrium=eq)  # fmt: skip
         run.save_artifact("evaluation.json", r)
         for name, e in r["programs"].items():
             for t, v in e["test"].items():
@@ -420,15 +430,17 @@ def cmd_evolve_exploiter_leduc(args: argparse.Namespace) -> None:
     from dataclasses import replace
     from pathlib import Path
 
-    from pokerbot.evolve.loop import evolve, leduc_task
+    from pokerbot.evolve.loop import evolve, hu_task, leduc_task
     from pokerbot.llm import LLMClient, LLMSettings
     from pokerbot.track import Run
 
     seeds: dict = {}
-    data = {"baseline": Path("profiles/baseline-leduc-v1.json")}
-    for spec in args.seed_program or ["programs/exploiter_leduc/seed.py"]:
+    task_name = getattr(args, "task", "leduc")
+    baseline = {"leduc": "profiles/baseline-leduc-v1.json", "hu": "profiles/blueprint-hu-v1.npz"}
+    data = {"baseline": Path(baseline[task_name])}
+    for spec in args.seed_program or [f"programs/exploiter_{task_name}/seed.py"]:
         path, _, params_path = spec.partition(",")
-        name = Path(path).stem.split("-")[0]
+        name = re.sub(r"-\d{8}-\d{6}-.*$", "", Path(path).stem)  # drop the run id
         src = Path(path).read_text(encoding="utf-8")
         if params_path:
             doc = json.loads(Path(params_path).read_text(encoding="utf-8"))
@@ -438,7 +450,7 @@ def cmd_evolve_exploiter_leduc(args: argparse.Namespace) -> None:
         data[f"seed_{name}"] = Path(path)
     config = {k: v for k, v in vars(args).items() if k != "func"}
     with Run.start(
-        "evolve-exploiter-leduc",
+        f"evolve-exploiter-{task_name}",
         kind="evolve-exploiter",
         config=config,
         seeds={"loop": args.seed},
@@ -448,7 +460,7 @@ def cmd_evolve_exploiter_leduc(args: argparse.Namespace) -> None:
         out = evolve(
             run,
             llm,
-            leduc_task(args.workers),
+            {"leduc": leduc_task, "hu": hu_task}[task_name](args.workers),
             seeds,
             args.generations,
             args.proposals,
@@ -499,6 +511,25 @@ def cmd_evolve_eval_exploiter_leduc(args: argparse.Namespace) -> None:
     config = {k: v for k, v in vars(args).items() if k != "func"}
     name = "eval-exploiter-leduc" + ("" if args.split == "test" else f"-{args.split}")
     with Run.start(name, kind="eval", config=config, data=data) as run:
+        if args.safety:
+            from pokerbot.evolve.hu_final import safety
+
+            name0, src0, params0 = programs[0]
+            r = {
+                "program": name0,
+                "safety_vs_blueprint": safety(src0, params0, args.safety, workers=args.workers),
+            }
+            run.save_artifact("safety.json", r)
+            s = r["safety_vs_blueprint"]
+            run.log_metrics(
+                {
+                    "test/bb100_vs_blueprint": s["bb100"],
+                    "test/bb100_vs_blueprint_ci_lo": s["ci95"][0],
+                },
+                program=name0,
+            )
+            print(r)
+            return
         r = evaluate(programs, workers=args.workers, split=args.split)
         run.save_artifact("evaluation.json", r)
         for name, modes in r["programs"].items():
@@ -525,6 +556,106 @@ def cmd_evolve_eval_exploiter_leduc(args: argparse.Namespace) -> None:
     print(f"run {run.dir.name}")
 
 
+def cmd_evolve_build_equilibrium(args: argparse.Namespace) -> None:
+    import json
+    from pathlib import Path
+
+    from pokerbot.evolve.equilibrium import measure
+    from pokerbot.track import Run
+
+    config = {k: v for k, v in vars(args).items() if k != "func"}
+    data = {"profiles": Path(args.profiles), "bots": Path(args.bots)}
+    if args.policy.startswith("blueprint:"):
+        data["policy"] = Path(args.policy.split(":", 1)[1])
+    with Run.start(
+        f"equilibrium-{args.format}",
+        kind="data",
+        config=config,
+        seeds={"sessions": args.seed},
+        data=data,
+    ) as run:
+        entry = measure(
+            args.policy,
+            Path(args.profiles),
+            Path(args.bots),
+            args.format,
+            sessions=args.sessions,
+            workers=args.workers,
+            seed=args.seed,
+        )
+        entry["run_id"] = run.dir.name
+        out = Path(args.out)
+        out.write_text(json.dumps(entry, indent=1), encoding="utf-8")
+        run.save_artifact(out.name, out)
+        run.finish(hash=entry["hash"], sessions=args.sessions)
+    print(out, {f: round(v, 3) for f, v in entry["pooled_rate"].items()})
+
+
+def cmd_evolve_eval_exploiter_hu(args: argparse.Namespace) -> None:
+    import json
+    from pathlib import Path
+
+    from pokerbot.evolve.hu_final import evaluate
+    from pokerbot.track import Run
+
+    programs = []
+    data = {"baseline": Path("profiles/blueprint-hu-v1.npz")}
+    for spec in args.program:
+        name, path, params_path = spec.split(",")
+        params = json.loads(Path(params_path).read_text(encoding="utf-8")) if params_path else {}
+        programs.append(
+            (name, Path(path).read_text(encoding="utf-8"), params.get("params", params))
+        )
+        data[f"program_{name}"] = Path(path)
+    config = {k: v for k, v in vars(args).items() if k != "func"}
+    name = "eval-exploiter-hu" + ("" if args.split == "test" else f"-{args.split}")
+    name += "-safety" if args.safety else ""
+    with Run.start(name, kind="eval", config=config, data=data) as run:
+        if args.safety:
+            from pokerbot.evolve.hu_final import safety
+
+            name0, src0, params0 = programs[0]
+            r = {
+                "program": name0,
+                "safety_vs_blueprint": safety(src0, params0, args.safety, workers=args.workers),
+            }
+            run.save_artifact("safety.json", r)
+            s = r["safety_vs_blueprint"]
+            run.log_metrics(
+                {
+                    "test/bb100_vs_blueprint": s["bb100"],
+                    "test/bb100_vs_blueprint_ci_lo": s["ci95"][0],
+                },
+                program=name0,
+            )
+            print(r)
+            return
+        r = evaluate(programs, workers=args.workers, split=args.split)
+        run.save_artifact("evaluation.json", r)
+        for pname, modes in r["programs"].items():
+            for mode, e in modes.items():
+                for kind in ("style", "nash", "switch"):
+                    lo, hi = e[kind]["ci95"]
+                    run.log_metrics(
+                        {
+                            f"test/bb100_{kind}": e[kind]["bb100"],
+                            f"test/bb100_{kind}_ci_half": (hi - lo) / 2,
+                        },
+                        program=pname,
+                        beliefs=mode,
+                    )
+                run.log_metric("test/fitness", e["fitness"], program=pname, beliefs=mode)
+        if "paired" in r:
+            run.log_metrics(
+                {
+                    "test/score_delta": r["paired"]["score_delta"],
+                    "test/p_one_sided": r["paired"]["p_one_sided"],
+                }
+            )
+    print(json.dumps(r, indent=1)[:8000])
+    print(f"run {run.dir.name}")
+
+
 def cmd_evolve_classifier(args: argparse.Namespace) -> None:
     import json
     from pathlib import Path
@@ -540,7 +671,7 @@ def cmd_evolve_classifier(args: argparse.Namespace) -> None:
         "programs/classifier/seed_b.py",
     ]:
         path, _, params_path = spec.partition(",")
-        name = Path(path).stem.split("-")[0]
+        name = re.sub(r"-\d{8}-\d{6}-.*$", "", Path(path).stem)  # drop the run id
         src = Path(path).read_text(encoding="utf-8")
         if params_path:
             doc = json.loads(Path(params_path).read_text(encoding="utf-8"))
@@ -574,6 +705,7 @@ def cmd_evolve_classifier(args: argparse.Namespace) -> None:
             workers=args.workers,
             seed=args.seed,
             max_calls=args.max_calls,
+            equilibrium=Path(args.equilibrium) if args.equilibrium else None,
         )
         champ = out["champion"]
         dest = Path(args.out_dir) / f"champion-{run.dir.name}.py"
@@ -776,6 +908,11 @@ def main(argv: list[str] | None = None) -> None:
     bd.add_argument("--split", action="append", required=True,
                     choices=["train", "val_a", "val_b", "test"])  # fmt: skip
     bd.add_argument("--sessions", type=int, default=240)
+    bd.add_argument(
+        "--equilibrium",
+        default=None,
+        help="policy taking some seats as an extra style, e.g. blueprint:<path>",
+    )
     bd.add_argument("--workers", type=int, default=8)
     bd.set_defaults(func=cmd_evolve_build_data)
 
@@ -801,6 +938,7 @@ def main(argv: list[str] | None = None) -> None:
     ev.add_argument("--profiles", default="profiles/styles-v1.json")
     ev.add_argument("--showdowns", default="data/processed/showdown_ranges.json")
     ev.add_argument("--real", default="data/processed/clf/sh-real.pkl.xz")
+    ev.add_argument("--equilibrium", default=None, help="equilibrium pseudo-style json (hu)")
     ev.set_defaults(func=cmd_evolve_eval)
 
     el = evo.add_parser("exploiter-leduc", help="evolve the Leduc exploiter with the LLM")
@@ -817,7 +955,22 @@ def main(argv: list[str] | None = None) -> None:
     el.add_argument("--workers", type=int, default=8)
     el.add_argument("--seed", type=int, default=0)
     el.add_argument("--out-dir", default="programs/exploiter_leduc")
-    el.set_defaults(func=cmd_evolve_exploiter_leduc)
+    el.set_defaults(func=cmd_evolve_exploiter_leduc, task="leduc")
+    eh = evo.add_parser("exploiter-hu", help="evolve the heads-up hold'em exploiter (Track B)")
+    eh.add_argument(
+        "--seed-program",
+        action="append",
+        default=None,
+        help="program.py[,params.json] to start from (repeatable)",
+    )
+    eh.add_argument("--generations", type=int, default=8)
+    eh.add_argument("--proposals", type=int, default=6)
+    eh.add_argument("--tune-iters", type=int, default=2)
+    eh.add_argument("--max-calls", type=int, default=150)
+    eh.add_argument("--workers", type=int, default=8)
+    eh.add_argument("--seed", type=int, default=0)
+    eh.add_argument("--out-dir", default="programs/exploiter_hu")
+    eh.set_defaults(func=cmd_evolve_exploiter_leduc, task="hu")
 
     xl = evo.add_parser("eval-exploiter-leduc", help="final Leduc exploiter evaluation (test)")
     xl.add_argument(
@@ -830,6 +983,34 @@ def main(argv: list[str] | None = None) -> None:
     xl.add_argument("--split", default="test", choices=["val_a", "val_b", "test"])
     xl.set_defaults(func=cmd_evolve_eval_exploiter_leduc)
 
+    be = evo.add_parser("build-equilibrium", help="measure the baseline as a pseudo-style")
+    be.add_argument("--policy", default="blueprint:profiles/blueprint-hu-v1.npz")
+    be.add_argument("--format", default="hu", choices=["hu"])
+    be.add_argument("--profiles", default="profiles/styles-v1.json")
+    be.add_argument("--bots", default="profiles/bots-v3.json")
+    be.add_argument("--sessions", type=int, default=200)
+    be.add_argument("--workers", type=int, default=8)
+    be.add_argument("--seed", type=int, default=0)
+    be.add_argument("--out", default="profiles/equilibrium-hu-v1.json")
+    be.set_defaults(func=cmd_evolve_build_equilibrium)
+
+    xh = evo.add_parser("eval-exploiter-hu", help="final heads-up exploiter evaluation (test)")
+    xh.add_argument(
+        "--program",
+        action="append",
+        required=True,
+        help="name,program.py,params.json (params may be empty; first vs second)",
+    )
+    xh.add_argument("--workers", type=int, default=8)
+    xh.add_argument("--split", default="test", choices=["val_a", "val_b", "test"])
+    xh.add_argument(
+        "--safety",
+        type=int,
+        default=0,
+        help="instead: N fresh sessions vs the blueprint only (first program)",
+    )
+    xh.set_defaults(func=cmd_evolve_eval_exploiter_hu)
+
     ec = evo.add_parser("classifier", help="evolve the style classifier with the LLM")
     ec.add_argument("--format", default="sh", choices=["hu", "sh", "fr"])
     ec.add_argument("--profiles", default="profiles/styles-v1.json")
@@ -841,6 +1022,7 @@ def main(argv: list[str] | None = None) -> None:
         help="program.py[,params.json] to start from (repeatable; default: seeds)",
     )
 
+    ec.add_argument("--equilibrium", default=None, help="equilibrium pseudo-style json (hu)")
     ec.add_argument("--generations", type=int, default=10)
     ec.add_argument("--proposals", type=int, default=8)
     ec.add_argument("--max-calls", type=int, default=300, help="LLM call budget")

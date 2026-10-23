@@ -20,21 +20,29 @@ from pathlib import Path
 import numpy as np
 
 from pokerbot.engine.table import play_hand
+from pokerbot.eval.duplicate import make_policy
 from pokerbot.evolve.harness import CHECKPOINTS, FeatureTracker, redact
 from pokerbot.opponents.sampler import StyleSampler
 from pokerbot.opponents.simulate import BIG_BLIND, SMALL_BLIND, stack_of
 from pokerbot.opponents.validate import SEATS
 
 SPLITS = {"train": 1, "val_a": 2, "val_b": 3, "test": 4}
+EQ_SEAT_SHARE = 0.15  # with an equilibrium policy, share of seats it takes (its style label: K)
 ROOT = Path("data/processed/clf")
 
 
 def _session(args) -> dict:
-    bots_path, fmt, seed = args
+    bots_path, fmt, seed, equilibrium = args
     rng = np.random.default_rng(seed)
     sampler = StyleSampler(Path(bots_path), fmt)
     draws = sampler.table(rng, SEATS[fmt])
     bots = [d.bot for d in draws]
+    labels = [d.style for d in draws]
+    if equilibrium:  # each seat is the baseline itself with probability EQ_SEAT_SHARE
+        for s in range(len(bots)):
+            if rng.random() < EQ_SEAT_SHARE:
+                bots[s] = make_policy(equilibrium, int(rng.integers(2**31)))
+                labels[s] = len(sampler.styles)
     stacks = [stack_of(b) for b in bots]
     tracker = FeatureTracker()
     n = len(bots)
@@ -48,7 +56,7 @@ def _session(args) -> dict:
         hands.append(events)
         if h + 1 in CHECKPOINTS:
             feats[h + 1] = [tracker.snapshot(s) for s in range(n)]
-    return {"seed": seed, "labels": [d.style for d in draws], "seats": list(range(n)),
+    return {"seed": seed, "labels": labels, "seats": list(range(n)),
             "hands": hands, "feats": feats}  # fmt: skip
 
 
@@ -57,9 +65,11 @@ def path_for(fmt: str, split: str, root: Path = ROOT) -> Path:
 
 
 def build(bots_path: Path, fmt: str, split: str, sessions: int, workers: int = 8,
-          root: Path = ROOT) -> Path:  # fmt: skip
+          root: Path = ROOT, equilibrium: str | None = None) -> Path:  # fmt: skip
+    """``equilibrium``: a policy spec (e.g. ``blueprint:<path>``) that takes seats as an extra
+    style (label K); pair with ``StyleProfiles.load(..., equilibrium_path=...)``."""
     base = SPLITS[split] * 10_000_000
-    jobs = [(str(bots_path), fmt, base + i) for i in range(sessions)]
+    jobs = [(str(bots_path), fmt, base + i, equilibrium) for i in range(sessions)]
     with ProcessPoolExecutor(workers) as pool:
         data = list(pool.map(_session, jobs, chunksize=4))
     out = path_for(fmt, split, root)
