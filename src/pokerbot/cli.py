@@ -572,6 +572,51 @@ def cmd_evolve_build_equilibrium(args: argparse.Namespace) -> None:
     print(out, {f: round(v, 3) for f, v in entry["pooled_rate"].items()})
 
 
+def cmd_evolve_eval_exploiter_hu(args: argparse.Namespace) -> None:
+    import json
+    from pathlib import Path
+
+    from pokerbot.evolve.hu_final import evaluate
+    from pokerbot.track import Run
+
+    programs = []
+    data = {"baseline": Path("profiles/blueprint-hu-v1.npz")}
+    for spec in args.program:
+        name, path, params_path = spec.split(",")
+        params = json.loads(Path(params_path).read_text(encoding="utf-8")) if params_path else {}
+        programs.append(
+            (name, Path(path).read_text(encoding="utf-8"), params.get("params", params))
+        )
+        data[f"program_{name}"] = Path(path)
+    config = {k: v for k, v in vars(args).items() if k != "func"}
+    name = "eval-exploiter-hu" + ("" if args.split == "test" else f"-{args.split}")
+    with Run.start(name, kind="eval", config=config, data=data) as run:
+        r = evaluate(programs, workers=args.workers, split=args.split)
+        run.save_artifact("evaluation.json", r)
+        for pname, modes in r["programs"].items():
+            for mode, e in modes.items():
+                for kind in ("style", "nash", "switch"):
+                    lo, hi = e[kind]["ci95"]
+                    run.log_metrics(
+                        {
+                            f"test/bb100_{kind}": e[kind]["bb100"],
+                            f"test/bb100_{kind}_ci_half": (hi - lo) / 2,
+                        },
+                        program=pname,
+                        beliefs=mode,
+                    )
+                run.log_metric("test/fitness", e["fitness"], program=pname, beliefs=mode)
+        if "paired" in r:
+            run.log_metrics(
+                {
+                    "test/score_delta": r["paired"]["score_delta"],
+                    "test/p_one_sided": r["paired"]["p_one_sided"],
+                }
+            )
+    print(json.dumps(r, indent=1)[:8000])
+    print(f"run {run.dir.name}")
+
+
 def cmd_evolve_classifier(args: argparse.Namespace) -> None:
     import json
     from pathlib import Path
@@ -909,6 +954,17 @@ def main(argv: list[str] | None = None) -> None:
     be.add_argument("--seed", type=int, default=0)
     be.add_argument("--out", default="profiles/equilibrium-hu-v1.json")
     be.set_defaults(func=cmd_evolve_build_equilibrium)
+
+    xh = evo.add_parser("eval-exploiter-hu", help="final heads-up exploiter evaluation (test)")
+    xh.add_argument(
+        "--program",
+        action="append",
+        required=True,
+        help="name,program.py,params.json (params may be empty; first vs second)",
+    )
+    xh.add_argument("--workers", type=int, default=8)
+    xh.add_argument("--split", default="test", choices=["val_a", "val_b", "test"])
+    xh.set_defaults(func=cmd_evolve_eval_exploiter_hu)
 
     ec = evo.add_parser("classifier", help="evolve the style classifier with the LLM")
     ec.add_argument("--format", default="sh", choices=["hu", "sh", "fr"])
