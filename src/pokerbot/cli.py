@@ -329,6 +329,166 @@ def cmd_baselines_headsup(args: argparse.Namespace) -> None:
     print(f"run {run.dir.name}")
 
 
+def cmd_evolve_build_data(args: argparse.Namespace) -> None:
+    import time
+    from pathlib import Path
+
+    from pokerbot.evolve import dataset
+    from pokerbot.track import Run
+
+    start = time.perf_counter()
+    config = {k: v for k, v in vars(args).items() if k != "func"}
+    with Run.start(f"clf-data-{args.format}", kind="data", config=config,
+                   seeds={s: dataset.SPLITS[s] * 10_000_000 for s in args.split},
+                   data={"bots": Path(args.bots)}) as run:  # fmt: skip
+        sizes = {}
+        for split in args.split:
+            path = dataset.build(Path(args.bots), args.format, split, args.sessions,
+                                 workers=args.workers)  # fmt: skip
+            sizes[split] = path.stat().st_size
+            run.log_metric(f"{split}/sessions", args.sessions)
+            print(f"{split}: {path} ({sizes[split] / 1e6:.1f} MB)", flush=True)
+        run.finish(sessions_per_split=args.sessions, bytes=sizes,
+                   seconds=time.perf_counter() - start)  # fmt: skip
+
+
+def cmd_evolve_build_real(args: argparse.Namespace) -> None:
+    import time
+    from pathlib import Path
+
+    from pokerbot.evolve.realdata import build_real
+    from pokerbot.track import Run
+
+    start = time.perf_counter()
+    config = {k: v for k, v in vars(args).items() if k != "func"}
+    data = {"hands": Path(args.data), "profiles": Path(args.profiles),
+            "player_stats": Path(args.stats)}  # fmt: skip
+    with Run.start(f"clf-real-{args.format}", kind="data", config=config,
+                   seeds={"players": args.seed}, data=data) as run:  # fmt: skip
+        sizes = build_real(Path(args.profiles), Path(args.stats), Path(args.data), args.format,
+                           Path(args.out), per_group=args.players, seed=args.seed,
+                           workers=args.workers)  # fmt: skip
+        for g, n in sizes.items():
+            run.log_metric(f"{g}/players", n)
+        run.finish(players=sizes, seconds=time.perf_counter() - start)
+    print(sizes)
+
+
+def cmd_evolve_eval(args: argparse.Namespace) -> None:
+    import json
+    from pathlib import Path
+
+    from pokerbot.evolve.final import evaluate_programs
+    from pokerbot.track import Run
+
+    programs = []
+    data = {"profiles": Path(args.profiles), "showdowns": Path(args.showdowns)}
+    for spec in args.program:
+        name, path, params_path = spec.split(",")
+        params = json.loads(Path(params_path).read_text(encoding="utf-8"))
+        programs.append(
+            (name, Path(path).read_text(encoding="utf-8"), params.get("params", params))
+        )
+        data[f"program_{name}"] = Path(path)
+    if Path(args.real).exists():
+        data["real"] = Path(args.real)
+    config = {k: v for k, v in vars(args).items() if k != "func"}
+    with Run.start(f"eval-classifier-{args.format}", kind="eval", config=config,
+                   data=data) as run:  # fmt: skip
+        r = evaluate_programs(programs, args.format, Path(args.profiles), Path(args.showdowns),
+                              Path(args.real))  # fmt: skip
+        run.save_artifact("evaluation.json", r)
+        for name, e in r["programs"].items():
+            for t, v in e["test"].items():
+                if isinstance(v, dict):
+                    run.log_metrics({f"test/logloss@{t}": v["logloss"],
+                                     f"test/accuracy@{t}": v["accuracy"],
+                                     f"test/ece@{t}": v["ece"]}, program=name)  # fmt: skip
+            for g in ("real_val", "real_test"):
+                for t, v in e.get(g, {}).items():
+                    m = {f"real/xent@{t}": v["xent"], f"real/accuracy@{t}": v["accuracy"]}
+                    run.log_metrics(m, program=name, group=g)
+        if "paired" in r:
+            run.log_metrics({"test/score_delta": r["paired"]["score_delta"],
+                             "test/p_one_sided": r["paired"]["p_one_sided"]})  # fmt: skip
+    print(json.dumps(r, indent=1)[:6000])
+    print(f"run {run.dir.name}")
+
+
+def cmd_evolve_classifier(args: argparse.Namespace) -> None:
+    import json
+    from pathlib import Path
+
+    from pokerbot.evolve.loop import evolve_classifier
+    from pokerbot.llm import LLMClient
+    from pokerbot.track import Run
+
+    seeds: dict = {}
+    data = {"profiles": Path(args.profiles), "showdowns": Path(args.showdowns)}
+    for spec in args.seed_program or [
+        "programs/classifier/seed_a.py",
+        "programs/classifier/seed_b.py",
+    ]:
+        path, _, params_path = spec.partition(",")
+        name = Path(path).stem.split("-")[0]
+        src = Path(path).read_text(encoding="utf-8")
+        if params_path:
+            doc = json.loads(Path(params_path).read_text(encoding="utf-8"))
+            seeds[name] = (src, doc.get("params", doc))
+            data[f"params_{name}"] = Path(params_path)
+        else:
+            seeds[name] = src
+        data[f"seed_{name}"] = Path(path)
+    config = {k: v for k, v in vars(args).items() if k != "func"}
+    with Run.start(
+        f"evolve-classifier-{args.format}",
+        kind="evolve-classifier",
+        config=config,
+        seeds={"loop": args.seed},
+        data=data,
+    ) as run:
+        from dataclasses import replace
+
+        from pokerbot.llm import LLMSettings
+
+        llm = LLMClient(replace(LLMSettings.from_env(), timeout_s=600.0), run=run)
+        out = evolve_classifier(
+            run,
+            llm,
+            args.format,
+            Path(args.profiles),
+            Path(args.showdowns),
+            seeds,
+            args.generations,
+            args.proposals,
+            workers=args.workers,
+            seed=args.seed,
+            max_calls=args.max_calls,
+        )
+        champ = out["champion"]
+        dest = Path(args.out_dir) / f"champion-{run.dir.name}.py"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(champ["source"], encoding="utf-8")
+        meta = {
+            "run_id": run.dir.name,
+            "candidate": champ["id"],
+            "params": champ["params"],
+            "val_a": champ["val"],
+            "idea": champ["idea"],
+        }
+        dest.with_suffix(".json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
+        run.save_artifact("champion.json", meta)
+        u = llm.usage
+        run.finish(
+            champion=champ["id"],
+            val_fitness=champ["val"]["fitness"],
+            llm_calls=u.calls,
+            prompt_tokens=u.prompt_tokens,
+            completion_tokens=u.completion_tokens,
+        )
+    print(f"champion {champ['id']} val_a fitness {champ['val']['fitness']:.4f} -> {dest}")
+
+
 def cmd_runs_list(args: argparse.Namespace) -> None:
     from pokerbot.track import list_runs
 
@@ -498,6 +658,59 @@ def main(argv: list[str] | None = None) -> None:
     hu.add_argument("--seed", type=int, default=0)
     hu.add_argument("--workers", type=int, default=8)
     hu.set_defaults(func=cmd_baselines_headsup)
+
+    evo = sub.add_parser("evolve", help="LLM-driven program search").add_subparsers(required=True)
+    bd = evo.add_parser("build-data", help="simulate classifier sessions for the given splits")
+    bd.add_argument("--format", default="sh", choices=["hu", "sh", "fr"])
+    bd.add_argument("--bots", default="profiles/bots-v3.json")
+    bd.add_argument("--split", action="append", required=True,
+                    choices=["train", "val_a", "val_b", "test"])  # fmt: skip
+    bd.add_argument("--sessions", type=int, default=240)
+    bd.add_argument("--workers", type=int, default=8)
+    bd.set_defaults(func=cmd_evolve_build_data)
+
+    br = evo.add_parser("build-real", help="real players' first hands, for transfer scoring")
+    br.add_argument("--format", default="sh", choices=["hu", "sh", "fr"])
+    br.add_argument("--data", default=HANDHQ_OUT)
+    br.add_argument("--profiles", default="profiles/styles-v1.json")
+    br.add_argument("--stats", default="data/processed/player_stats.parquet")
+    br.add_argument("--out", default="data/processed/clf/sh-real.pkl.xz")
+    br.add_argument("--players", type=int, default=300, help="per group (fit-set / held-out)")
+    br.add_argument("--seed", type=int, default=0)
+    br.add_argument("--workers", type=int, default=6)
+    br.set_defaults(func=cmd_evolve_build_real)
+
+    ev = evo.add_parser("eval-classifier", help="final evaluation on test seeds and real players")
+    ev.add_argument(
+        "--program",
+        action="append",
+        required=True,
+        help="name,program.py,params.json (repeatable; first vs second is paired)",
+    )
+    ev.add_argument("--format", default="sh", choices=["hu", "sh", "fr"])
+    ev.add_argument("--profiles", default="profiles/styles-v1.json")
+    ev.add_argument("--showdowns", default="data/processed/showdown_ranges.json")
+    ev.add_argument("--real", default="data/processed/clf/sh-real.pkl.xz")
+    ev.set_defaults(func=cmd_evolve_eval)
+
+    ec = evo.add_parser("classifier", help="evolve the style classifier with the LLM")
+    ec.add_argument("--format", default="sh", choices=["hu", "sh", "fr"])
+    ec.add_argument("--profiles", default="profiles/styles-v1.json")
+    ec.add_argument("--showdowns", default="data/processed/showdown_ranges.json")
+    ec.add_argument(
+        "--seed-program",
+        action="append",
+        default=None,
+        help="program.py[,params.json] to start from (repeatable; default: seeds)",
+    )
+
+    ec.add_argument("--generations", type=int, default=10)
+    ec.add_argument("--proposals", type=int, default=8)
+    ec.add_argument("--max-calls", type=int, default=300, help="LLM call budget")
+    ec.add_argument("--workers", type=int, default=8)
+    ec.add_argument("--seed", type=int, default=0)
+    ec.add_argument("--out-dir", default="programs/classifier")
+    ec.set_defaults(func=cmd_evolve_classifier)
 
     runs = sub.add_parser("runs", help="tracked experiment runs").add_subparsers(required=True)
     runs.add_parser("list", help="all runs").set_defaults(func=cmd_runs_list)
