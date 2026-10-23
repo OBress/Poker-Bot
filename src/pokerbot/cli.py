@@ -270,6 +270,65 @@ def cmd_bots_tune_spread(args: argparse.Namespace) -> None:
         print({k: round(v, 3) for k, v in scales.items()})
 
 
+def cmd_baselines_solve(args: argparse.Namespace) -> None:
+    from pathlib import Path
+
+    from pokerbot.baselines.track_a import run_track_a
+
+    out = Path(args.out or f"profiles/baseline-{args.game}-v1.json")
+    r = run_track_a(args.game, args.iters, out, players_per_style=args.players, seed=args.seed)
+    print(f"{args.game}: exploitability {r['exploitability']:.2e} chips/hand, "
+          f"hash {r['baseline_hash']}, run {r['run_id']}")  # fmt: skip
+    print(f"{'style':18s} {'nash':>16s} {'best response':>16s} {'headroom':>16s}  (chips/hand)")
+    for style, e in r["styles"].items():
+        cells = [f"{e[k]['mean']:+.3f} +-{e[k]['ci95'][1] - e[k]['mean']:.3f}"
+                 for k in ("nash", "best", "headroom")]  # fmt: skip
+        print(f"{style:18s} " + " ".join(f"{c:>16s}" for c in cells))
+
+
+def cmd_baselines_blueprint(args: argparse.Namespace) -> None:
+    from pathlib import Path
+
+    from pokerbot.baselines.track_b import run_blueprint
+
+    r = run_blueprint(args.rounds, args.iters, args.workers, args.seed, Path(args.out),
+                      Path(args.checkpoint), resume=not args.fresh)  # fmt: skip
+    print(r)
+
+
+def cmd_baselines_matchups(args: argparse.Namespace) -> None:
+    from pathlib import Path
+
+    from pokerbot.baselines.matchups import run_matchups
+
+    r = run_matchups(args.policy, args.format, Path(args.bots), args.sessions, args.hands,
+                     seed=args.seed, workers=args.workers)  # fmt: skip
+    print(f"run {r['run_id']}: {r['hands_per_policy']:,} hands per policy")
+
+
+def cmd_baselines_headsup(args: argparse.Namespace) -> None:
+    from pathlib import Path
+
+    from pokerbot.eval.headsup import heads_up
+    from pokerbot.track import Run
+
+    data = {f"policy{i}": Path(p.split(":", 1)[1]) for i, p in enumerate((args.a, *args.b))
+            if p.startswith("blueprint:")}  # fmt: skip
+    with Run.start("headsup", kind="baseline", config=vars(args) | {"func": None},
+                   seeds={"blocks": args.seed}, data=data) as run:  # fmt: skip
+        results = []
+        for b in args.b:
+            r = heads_up(args.a, b, args.blocks, args.deals, seed=args.seed, workers=args.workers)
+            half = (r["ci95"][1] - r["ci95"][0]) / 2
+            run.log_metrics({"val/bb100": r["bb100"], "val/bb100_ci_half": half}, opponent=b)
+            lo, hi = r["ci95"]
+            print(f"{args.a} vs {b}: {r['bb100']:+.1f} bb/100 [{lo:+.1f}, {hi:+.1f}] "
+                  f"over {r['hands']:,} hands")  # fmt: skip
+            results.append(r)
+        run.save_artifact("headsup.json", {"results": results})
+    print(f"run {run.dir.name}")
+
+
 def cmd_runs_list(args: argparse.Namespace) -> None:
     from pokerbot.track import list_runs
 
@@ -400,6 +459,45 @@ def main(argv: list[str] | None = None) -> None:
     tune.add_argument("--stats", default="data/processed/player_stats.parquet")
     tune.add_argument("--workers", type=int, default=8)
     tune.set_defaults(func=cmd_bots_tune_spread)
+
+    base = sub.add_parser("baselines", help="baselines to beat").add_subparsers(required=True)
+    solve = base.add_parser("solve", help="Track A: CFR+ Nash for kuhn/leduc and its matchups")
+    solve.add_argument("--game", default="leduc", choices=["kuhn", "leduc"])
+    solve.add_argument("--iters", type=int, default=5000)
+    solve.add_argument("--players", type=int, default=200, help="sampled players per style")
+    solve.add_argument("--seed", type=int, default=0)
+    solve.add_argument("--out", default=None)
+    solve.set_defaults(func=cmd_baselines_solve)
+
+    bp = base.add_parser("blueprint", help="Track B: train the heads-up MCCFR blueprint")
+    bp.add_argument("--rounds", type=int, default=200, help="total rounds (resume counts done)")
+    bp.add_argument("--iters", type=int, default=4000, help="iterations per worker per round")
+    bp.add_argument("--workers", type=int, default=8)
+    bp.add_argument("--seed", type=int, default=0)
+    bp.add_argument("--out", default="data/processed/blueprint-hu-v1.npz")
+    bp.add_argument("--checkpoint", default="data/processed/blueprint-hu.ckpt")
+    bp.add_argument("--fresh", action="store_true", help="ignore an existing checkpoint")
+    bp.set_defaults(func=cmd_baselines_blueprint)
+
+    mu = base.add_parser("matchups", help="baseline win rates vs every style (duplicate)")
+    mu.add_argument("--policy", action="append", required=True,
+                    help="abc | hand-strength | blueprint:<path> (repeatable)")  # fmt: skip
+    mu.add_argument("--format", default="hu", choices=["hu", "sh", "fr"])
+    mu.add_argument("--bots", default="profiles/bots-v3.json")
+    mu.add_argument("--sessions", type=int, default=200, help="per style")
+    mu.add_argument("--hands", type=int, default=250, help="per session")
+    mu.add_argument("--seed", type=int, default=0)
+    mu.add_argument("--workers", type=int, default=8)
+    mu.set_defaults(func=cmd_baselines_matchups)
+
+    hu = base.add_parser("headsup", help="seat-swapped duplicate heads-up match")
+    hu.add_argument("--a", required=True, help="policy A (abc | hand-strength | blueprint:<path>)")
+    hu.add_argument("--b", action="append", required=True, help="opponent policy (repeatable)")
+    hu.add_argument("--blocks", type=int, default=500)
+    hu.add_argument("--deals", type=int, default=100, help="deals per block (each played twice)")
+    hu.add_argument("--seed", type=int, default=0)
+    hu.add_argument("--workers", type=int, default=8)
+    hu.set_defaults(func=cmd_baselines_headsup)
 
     runs = sub.add_parser("runs", help="tracked experiment runs").add_subparsers(required=True)
     runs.add_parser("list", help="all runs").set_defaults(func=cmd_runs_list)

@@ -93,7 +93,63 @@ Not built yet: drift, tilt and style-switching bots (the last bullet below).
 **Exit:** for every style, the simulated stats of sampled bots fall within the real style's spread
 on all key stats.
 
-## Phase 4 — Baselines
+## Phase 4 — Baselines ✅
+
+Done. Every number below is a duplicate measurement (same cards, seats and opponents for each
+policy), all-in runouts replaced by their expectation, 95% CI from a bootstrap over sessions.
+
+**Track A** (`profiles/baseline-{kuhn,leduc}-v1.json`, CFR+). Leduc: exploitability 4.0e-5
+chips/hand after 5,000 iterations, seat-0 value −0.0856 (matches the published value), hash
+2c9e232f2e166454, run 20261020-191123-baseline-leduc. Kuhn: 3.9e-5, value −1/18, run
+20261020-191111-baseline-kuhn. Values vs five hand-defined styles are exact (card luck integrated
+out; CI over 200 sampled players per style), chips/hand:
+
+| Leduc style | Nash baseline | Best response (exploitation ceiling) |
+|---|---|---|
+| nit | +0.107 ± 0.002 | +0.968 ± 0.017 |
+| calling station | +0.486 ± 0.006 | +1.188 ± 0.009 |
+| maniac | +0.348 ± 0.004 | +1.509 ± 0.014 |
+| fit-or-fold | +0.235 ± 0.004 | +0.728 ± 0.009 |
+| bluffer | +0.213 ± 0.003 | +1.346 ± 0.027 |
+
+**Track B** (`profiles/blueprint-hu-v1.npz`): external-sampling MCCFR on an abstract heads-up game
+(bets 33/75/125% pot or all-in, raises 75% or all-in; 169 preflop classes, 12 equity buckets per
+later street; 259k information sets), 4.0M iterations, hash 6bb020139df832d9, runs
+20261020-192609-blueprint-hu (training, stopped at round 100 when the regret proxy had been flat
+since round 60) and 20261020-215732-blueprint-hu (final export). Sanity checks, head-to-head over
+100k hands (run 20261020-220236-headsup): vs hand-strength +14.2 bb/100 [+7.2, +21.0]; vs ABC TAG
++2.0 [−4.6, +8.8] (not significant). No local best-response check yet.
+
+**Win rates vs every style** (bb/100 [95% CI]; Track B heads-up 250k hands per policy, run
+20261020-215752-matchups-hu; Track C short-handed 405k, run 20261020-192844-matchups-sh;
+full ring 210k, run 20261020-200122-matchups-fr; opponents `profiles/bots-v3.json`):
+
+| Format / style | Blueprint (hu) | ABC TAG | Hand-strength |
+|---|---|---|---|
+| hu HU hyper-aggressor | +31.8 [+20.8, +42.0] | −2.3 [−8.9, +4.1] | +9.5 [+0.7, +18.4] |
+| hu HU limper | +36.9 [+27.8, +46.0] | +29.1 [+21.8, +36.1] | +45.8 [+34.7, +57.2] |
+| hu HU semi-passive | +25.2 [+16.1, +34.1] | +13.1 [+7.4, +18.5] | +9.2 [+1.3, +17.4] |
+| hu HU regular | +29.2 [+19.6, +39.3] | −1.2 [−7.2, +4.9] | +0.4 [−6.3, +6.7] |
+| hu mixed | **+21.2 [+10.8, +32.6]** | +3.8 [−2.4, +10.2] | +8.2 [+0.4, +16.0] |
+| sh Loose-aggressive fish | | +21.8 [+13.0, +30.7] | +31.7 [+20.2, +43.0] |
+| sh Passive limper | | +23.2 [+15.5, +30.7] | −14.2 [−26.2, −2.9] |
+| sh Loose-passive | | +30.5 [+22.3, +39.5] | +26.1 [+15.7, +36.4] |
+| sh Position-blind aggressor | | +21.3 [+14.1, +28.7] | +23.9 [+14.4, +33.5] |
+| sh Semi-loose passive | | +13.6 [+6.6, +20.6] | −2.5 [−11.7, +6.9] |
+| sh TAG | | +16.4 [+9.5, +23.8] | −5.0 [−16.6, +6.7] |
+| sh Tight-solid (ABC) | | +6.9 [+0.0, +13.9] | −17.8 [−28.0, −7.5] |
+| sh Short-stacker | | +4.8 [+0.8, +8.8] | +18.3 [+11.9, +24.5] |
+| sh mixed | | **+18.0 [+9.9, +26.2]** | +6.8 [−5.6, +18.3] |
+| fr Loose-passive | | +27.1 [+18.2, +36.8] | +30.6 [+17.0, +45.1] |
+| fr Passive limper | | +19.1 [+10.0, +27.3] | +17.8 [+4.1, +31.4] |
+| fr Weak-tight | | +26.1 [+17.5, +34.1] | +24.7 [+9.5, +38.4] |
+| fr TAG | | +18.3 [+9.2, +27.4] | +16.5 [+5.8, +26.7] |
+| fr Nit | | +4.6 [−1.5, +11.1] | −14.9 [−22.9, −7.2] |
+| fr Short-stacker | | +1.7 [−0.4, +3.8] | −2.8 [−6.8, +1.4] |
+| fr mixed | | **+13.9 [+5.3, +21.6]** | +20.5 [+8.1, +32.2] |
+
+The numbers to beat: the blueprint heads-up (Track B) and the Nash strategy in Leduc (Track A).
+For 6-max there is no equilibrium baseline; ABC TAG is the reference (Track C is a demonstration).
 
 - Track A: CFR+ for Kuhn and Leduc (verified exploitability ≈ 0).
 - Track B: MCCFR blueprint for abstracted HU NLHE; quality checks.
