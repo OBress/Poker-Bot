@@ -121,6 +121,7 @@ def cmd_bots_calibrate(args: argparse.Namespace) -> None:
         workers=args.workers,
         warm_start=Path(args.warm_start) if args.warm_start else None,
         real_showdowns=Path(args.real_showdowns) if args.real_showdowns else None,
+        damping=args.damping,
     )
     print(out)
 
@@ -371,6 +372,8 @@ def main(argv: list[str] | None = None) -> None:
     cal.add_argument("--warm-start", default=None, help="earlier bots file to start from")
     cal.add_argument("--real-showdowns", default="data/processed/showdown_ranges.json",
                      help="real shown-hand tables to match ('' to skip)")  # fmt: skip
+    cal.add_argument("--damping", type=float, default=1.0,
+                     help="fraction of the way style centers move between rounds")  # fmt: skip
     cal.set_defaults(func=cmd_bots_calibrate)
     sdr = bots.add_parser("showdown-real", help="shown-hand strength by line, real players")
     sdr.add_argument("--data", default=HANDHQ_OUT)

@@ -45,6 +45,7 @@ def run_calibration(
     seed: int = 0,
     warm_start: Path | None = None,
     real_showdowns: Path | None = None,
+    damping: float = 1.0,
 ) -> Path:
     """``real_showdowns``: real shown-hand tables (``bots showdown-real``); when given, the loss
     also matches each style's mean shown equity per line group (``calibrate.LINE_GROUPS``)."""
@@ -54,7 +55,7 @@ def run_calibration(
         structure=STRUCTURE, layouts={f: vars(LAYOUT[f]) for f in formats},
         warm_start=str(warm_start) if warm_start else None,
         real_showdowns=str(real_showdowns) if real_showdowns else None,
-        line_groups=LINE_GROUPS, showdown_tol=SHOWDOWN_TOL,
+        line_groups=LINE_GROUPS, showdown_tol=SHOWDOWN_TOL, damping=damping,
     )  # fmt: skip
     data = {"profiles": profiles_path, "player_stats": stats_path}
     if real_showdowns:
@@ -103,7 +104,7 @@ def run_calibration(
             layout = LAYOUT[fmt]
             results, pop = calibrate_format(
                 targets, rounds, iters, popsize, hands, workers, seed, log, warm=warm,
-                warm_names=warm_names, layout=layout, hands_q=hands_q,
+                warm_names=warm_names, layout=layout, hands_q=hands_q, damping=damping,
             )  # fmt: skip
             styles = []
             for res, t in zip(results, targets, strict=True):
