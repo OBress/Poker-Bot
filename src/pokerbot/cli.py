@@ -511,6 +511,25 @@ def cmd_evolve_eval_exploiter_leduc(args: argparse.Namespace) -> None:
     config = {k: v for k, v in vars(args).items() if k != "func"}
     name = "eval-exploiter-leduc" + ("" if args.split == "test" else f"-{args.split}")
     with Run.start(name, kind="eval", config=config, data=data) as run:
+        if args.safety:
+            from pokerbot.evolve.hu_final import safety
+
+            name0, src0, params0 = programs[0]
+            r = {
+                "program": name0,
+                "safety_vs_blueprint": safety(src0, params0, args.safety, workers=args.workers),
+            }
+            run.save_artifact("safety.json", r)
+            s = r["safety_vs_blueprint"]
+            run.log_metrics(
+                {
+                    "test/bb100_vs_blueprint": s["bb100"],
+                    "test/bb100_vs_blueprint_ci_lo": s["ci95"][0],
+                },
+                program=name0,
+            )
+            print(r)
+            return
         r = evaluate(programs, workers=args.workers, split=args.split)
         run.save_artifact("evaluation.json", r)
         for name, modes in r["programs"].items():
@@ -590,7 +609,27 @@ def cmd_evolve_eval_exploiter_hu(args: argparse.Namespace) -> None:
         data[f"program_{name}"] = Path(path)
     config = {k: v for k, v in vars(args).items() if k != "func"}
     name = "eval-exploiter-hu" + ("" if args.split == "test" else f"-{args.split}")
+    name += "-safety" if args.safety else ""
     with Run.start(name, kind="eval", config=config, data=data) as run:
+        if args.safety:
+            from pokerbot.evolve.hu_final import safety
+
+            name0, src0, params0 = programs[0]
+            r = {
+                "program": name0,
+                "safety_vs_blueprint": safety(src0, params0, args.safety, workers=args.workers),
+            }
+            run.save_artifact("safety.json", r)
+            s = r["safety_vs_blueprint"]
+            run.log_metrics(
+                {
+                    "test/bb100_vs_blueprint": s["bb100"],
+                    "test/bb100_vs_blueprint_ci_lo": s["ci95"][0],
+                },
+                program=name0,
+            )
+            print(r)
+            return
         r = evaluate(programs, workers=args.workers, split=args.split)
         run.save_artifact("evaluation.json", r)
         for pname, modes in r["programs"].items():
@@ -964,6 +1003,12 @@ def main(argv: list[str] | None = None) -> None:
     )
     xh.add_argument("--workers", type=int, default=8)
     xh.add_argument("--split", default="test", choices=["val_a", "val_b", "test"])
+    xh.add_argument(
+        "--safety",
+        type=int,
+        default=0,
+        help="instead: N fresh sessions vs the blueprint only (first program)",
+    )
     xh.set_defaults(func=cmd_evolve_eval_exploiter_hu)
 
     ec = evo.add_parser("classifier", help="evolve the style classifier with the LLM")

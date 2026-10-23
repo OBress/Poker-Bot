@@ -70,3 +70,32 @@ def evaluate(
             "p_one_sided": float(ttest_rel(scores[a], scores[b], alternative="greater").pvalue),
         }
     return out
+
+
+def safety(
+    source: str, params: dict, sessions: int = 600, workers: int = 8, first_index: int = 10_000
+) -> dict:
+    """bb/100 over the blueprint against the blueprint only, on fresh test-range seeds (session
+    indices from ``first_index``, never used by evolution or the main test evaluation). The
+    regular test split has only 60 such sessions, too few to bound a loss tightly."""
+    from pokerbot.evolve.hu_task import _run
+
+    idx = [
+        i
+        for i in range(first_index, first_index + 20 * sessions)
+        if hu.SessionSpec("test", i).kind == "nash"
+    ][:sessions]
+    ev = HUEvaluator(workers=workers, allow_test=True)
+    try:
+        parts = [idx[i::workers] for i in range(workers)]
+        jobs = [ev.pool.apply_async(_run, (source, params, "test", p, "classifier")) for p in parts]
+        res = [r for j in jobs for r in j.get(3600)["results"]]
+    finally:
+        ev.close()
+    v = np.array([100 * r["d"].mean() for r in res])
+    return {
+        "sessions": len(v),
+        "bb100": float(v.mean()),
+        "ci95": _ci(v),
+        "first_index": first_index,
+    }
