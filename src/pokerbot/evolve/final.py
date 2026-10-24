@@ -40,10 +40,13 @@ def evaluate_programs(
     showdown_path: Path,
     real_path: Path | None,
     equilibrium: Path | None = None,
+    test: list[dict] | None = None,
 ) -> dict:
-    """``programs``: (name, source, params). Reads the test split and held-out players."""
+    """``programs``: (name, source, params). Reads the test split (or uses ``test``) and the
+    held-out players."""
     prof = StyleProfiles.load(profiles_path, fmt, showdown_path, equilibrium)
-    test = dataset.load(fmt, "test", allow_test=True)
+    if test is None:
+        test = dataset.load(fmt, "test", allow_test=True)
     labels = [s["labels"] for s in test]
     real = {}
     if real_path and Path(real_path).exists():
@@ -78,6 +81,7 @@ def evaluate_programs(
                 entry[g][t] = {"xent": float(xent.mean()), "xent_ci": _ci(xent),
                                "accuracy": float(hit.mean()), "accuracy_ci": _ci(hit)}  # fmt: skip
         out["programs"][name] = entry
+    out["session_scores"] = {k: v.tolist() for k, v in session_scores.items()}
     if len(programs) == 2:
         a, b = programs[0][0], programs[1][0]
         d = session_scores[a] - session_scores[b]
