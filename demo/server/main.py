@@ -7,7 +7,8 @@ id, so a reload keeps the seat. Every change is pushed to every client as its ow
 think in a worker thread with a short delay so the table feels human; humans get
 ``TURN_SECONDS`` to act, after which they check or fold.
 
-Listens on all interfaces so other people on your network can join from their browser.
+Listens on all interfaces, IPv6 and IPv4, so other people on your network can join from their
+browser.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import argparse
 import asyncio
 import contextlib
 import os
+import socket
 import sys
 import time
 from pathlib import Path
@@ -196,13 +198,23 @@ def create_app(seed: int = 0) -> FastAPI:
     return app
 
 
+def listen_socket(port: int) -> socket.socket:
+    """One socket for IPv6 and IPv4 on all interfaces. Browsers may resolve ``localhost`` to
+    ``::1`` (as ``next dev`` listens there too); an IPv4-only server is then unreachable."""
+    sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+    sock.bind(("::", port))
+    return sock
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--log-level", default="warning")
     args = ap.parse_args()
-    uvicorn.run(create_app(args.seed), host=args.host, port=args.port, log_level="warning")
+    server = uvicorn.Server(uvicorn.Config(create_app(args.seed), log_level=args.log_level))
+    server.run(sockets=[listen_socket(args.port)])
 
 
 if __name__ == "__main__":
