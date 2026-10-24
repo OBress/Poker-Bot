@@ -4,10 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:all": "node scripts/dev.mjs",
     "server": "cd ../.. && uv run --extra demo python demo/server/main.py",
-    "demo": "node scripts/demo.mjs",
+    "demo": "next build && npm run server",
     "build": "next build",
-    "start": "next start",
     "lint": "eslint"
   },
   "dependencies": {

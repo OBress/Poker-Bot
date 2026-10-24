@@ -1,4 +1,5 @@
-// Starts the Python game server and the Next.js dev server together: `npm run demo`.
+// Development: the Python game server and `next dev` (hot reload) together: `npm run dev:all`.
+// Open http://localhost:3000. For playing, `npm run demo` serves everything from port 8000.
 import { spawn } from "node:child_process";
 
 const procs = [
