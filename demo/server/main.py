@@ -25,12 +25,14 @@ sys.path.insert(0, str(ROOT))
 os.chdir(ROOT)  # the engine's profiles and programs are addressed from the repo root
 
 import uvicorn  # noqa: E402
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect  # noqa: E402
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect  # noqa: E402
+from fastapi.responses import RedirectResponse  # noqa: E402
 
 from demo.server.table import KINDS, SEATS, Table, parse_action  # noqa: E402
 from pokerbot.engine.actions import Action  # noqa: E402
 
 TURN_SECONDS = 45
+WEB_PORT = int(os.environ.get("POKERBOT_WEB_PORT", "3000"))  # where the Next.js app runs
 BETWEEN_HANDS = 4.0
 
 
@@ -155,6 +157,11 @@ def create_app(seed: int = 0) -> FastAPI:
         game.task.cancel()
 
     app = FastAPI(title="Poker-Bot demo", lifespan=lifespan)
+
+    @app.get("/")
+    async def root(request: Request) -> RedirectResponse:
+        """This server only speaks WebSocket; send browsers to the table on the web port."""
+        return RedirectResponse(f"http://{request.url.hostname}:{WEB_PORT}/")
 
     @app.get("/health")
     async def health() -> dict:
