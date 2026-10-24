@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  background: #120d18;
+  color: #f5f5f5;
+  overscroll-behavior: none;
+}
+
+@layer components {
+  .btn {
+    @apply rounded-lg px-3 py-1.5 text-sm font-semibold text-white transition-colors disabled:opacity-40;
+  }
+}

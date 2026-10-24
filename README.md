@@ -40,6 +40,9 @@ Phases 0–7 done. Final pre-registered result ([docs/RESULTS.md](docs/RESULTS.m
 exploiter beats the equilibrium baseline against exploitable opponents by +0.51 chips/hand in
 Leduc and +107 bb/100 in heads-up no-limit (95% CIs well above zero). Against the baseline
 itself it is safe in Leduc; in heads-up a loss of up to about 7 bb/100 can't be ruled out.
+
+To play against the engine yourself, run the 3D table in [demo/](demo/README.md) (Next.js +
+three.js, up to 8 seats, friends on your network can join).
 See [docs/ROADMAP.md](docs/ROADMAP.md) for phases and exit criteria,
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design, and
 [docs/EVOLUTION.md](docs/EVOLUTION.md) for how the LLM edits the algorithms, and
