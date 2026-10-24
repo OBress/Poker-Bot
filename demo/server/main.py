@@ -1,6 +1,9 @@
-"""Demo game server: one 8-seat table over WebSockets.
+"""Demo game server: one 8-seat table over WebSockets, plus the built web app.
 
     uv run --extra demo python demo/server/main.py [--port 8000] [--seed 0]
+
+With the web app built (``npm run build --prefix demo/web``, or ``npm run demo`` which also
+starts this server) the table is at http://localhost:8000, page and WebSocket on one origin.
 
 Clients (the Next.js app in ``demo/web``) connect to ``/ws`` and say hello with a stable client
 id, so a reload keeps the seat. Every change is pushed to every client as its own view. Bots
@@ -29,12 +32,14 @@ os.chdir(ROOT)  # the engine's profiles and programs are addressed from the repo
 import uvicorn  # noqa: E402
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect  # noqa: E402
 from fastapi.responses import RedirectResponse  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 from demo.server.table import KINDS, SEATS, Table, parse_action  # noqa: E402
 from pokerbot.engine.actions import Action  # noqa: E402
 
 TURN_SECONDS = 45
-WEB_PORT = int(os.environ.get("POKERBOT_WEB_PORT", "3000"))  # where the Next.js app runs
+WEB_PORT = int(os.environ.get("POKERBOT_WEB_PORT", "3000"))  # where `next dev` runs
+WEB_BUILD = ROOT / "demo/web/out"  # the static site from `next build` (npm run demo)
 BETWEEN_HANDS = 4.0
 
 
@@ -159,11 +164,6 @@ def create_app(seed: int = 0) -> FastAPI:
 
     app = FastAPI(title="Poker-Bot demo", lifespan=lifespan)
 
-    @app.get("/")
-    async def root(request: Request) -> RedirectResponse:
-        """This server only speaks WebSocket; send browsers to the table on the web port."""
-        return RedirectResponse(f"http://{request.url.hostname}:{WEB_PORT}/")
-
     @app.get("/health")
     async def health() -> dict:
         return {"ok": True, "clients": len(game.clients) if game else 0}
@@ -196,6 +196,16 @@ def create_app(seed: int = 0) -> FastAPI:
                 ):
                     pending.set_result(Action.fold())
             await game.broadcast()
+
+    if WEB_BUILD.is_dir():
+        # the table itself, from this same origin, so the page's WebSocket is same-site
+        app.mount("/", StaticFiles(directory=WEB_BUILD, html=True), name="web")
+    else:
+
+        @app.get("/")
+        async def root(request: Request) -> RedirectResponse:
+            """Not built yet: send browsers to `next dev`."""
+            return RedirectResponse(f"http://{request.url.hostname}:{WEB_PORT}/")
 
     return app
 

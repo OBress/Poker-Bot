@@ -24,7 +24,7 @@ export default function PokerApp() {
         <div className="text-center">
           <div className="text-2xl font-semibold">PokerBot table</div>
           <div className="mt-2 text-sm text-white/60">
-            {status === "closed" ? "Can't reach the game server on port 8000. Is it running? Retrying…" : "Connecting…"}
+            {status === "closed" ? "Can't reach the game server. Is it running? Retrying…" : "Connecting…"}
           </div>
         </div>
       </div>

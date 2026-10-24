@@ -21,22 +21,21 @@ uv sync --extra demo
 npm install --prefix demo/web
 ```
 
-Then start both servers:
+Then build the web app and start the game server, which serves it:
 
 ```bash
 npm run demo --prefix demo/web
 ```
 
-Open http://localhost:3000, type a name, take a seat and press **Deal**. If you prefer two
-terminals, start the game server and the web app separately:
+Open http://localhost:8000, type a name, take a seat and press **Deal**. The page and its live
+connection come from the same address, so browser privacy features and extensions have nothing
+cross-site to block. Once built, `uv run --extra demo python demo/server/main.py` alone starts it
+again.
 
-```bash
-uv run --extra demo python demo/server/main.py
-```
-
-```bash
-npm run dev --prefix demo/web
-```
+**Developing the client:** `npm run dev:all --prefix demo/web` runs the game server and `next dev`
+(hot reload) together; open http://localhost:3000. There the page talks to the game server on
+port 8000, a cross-site connection that some browser extensions block. Use a clean browser
+profile if it can't connect.
 
 ## Who's at the table
 
@@ -69,8 +68,8 @@ players by seat.
 
 ## Playing with other people
 
-The game server listens on all interfaces, IPv4 and IPv6 (port 8000), and `next dev` on port
-3000. Friends on your network open `http://<your-computer's-IP>:3000`, pick an open seat and play.
+The game server listens on all interfaces, IPv4 and IPv6, on port 8000. Friends on your network
+open `http://<your-computer's-IP>:8000`, pick an open seat and play.
 Every browser tab is its own person, and reloading a tab keeps its seat. To play several people
 from one machine, just open more tabs.
 

@@ -4,6 +4,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ClientMessage, TableView } from "./types";
 
 const PORT = process.env.NEXT_PUBLIC_SERVER_PORT ?? "8000";
+const DEV_PORT = "3000";
+
+/** The game server's WebSocket. Normally it serves this page too, so it's the page's own
+ * origin (no cross-site request for browser privacy features to block); under `next dev` on
+ * port 3000 it's the game server's port on the same host. */
+function serverUrl(): string {
+  const { protocol, hostname, host, port } = window.location;
+  const scheme = protocol === "https:" ? "wss" : "ws";
+  return port === DEV_PORT ? `${scheme}://${hostname}:${PORT}/ws` : `${scheme}://${host}/ws`;
+}
 
 function clientId(): string {
   // One player per browser tab: sessionStorage survives reloading the tab (so you keep your
@@ -36,7 +46,7 @@ export function useTable() {
 
     const connect = () => {
       setStatus("connecting");
-      const socket = new WebSocket(`ws://${window.location.hostname}:${PORT}/ws`);
+      const socket = new WebSocket(serverUrl());
       ws.current = socket;
       socket.onopen = () => {
         setStatus("open");
