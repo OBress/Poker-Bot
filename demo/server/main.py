@@ -31,6 +31,7 @@ os.chdir(ROOT)  # the engine's profiles and programs are addressed from the repo
 
 import uvicorn  # noqa: E402
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import RedirectResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
@@ -41,6 +42,8 @@ TURN_SECONDS = 45
 WEB_PORT = int(os.environ.get("POKERBOT_WEB_PORT", "3000"))  # where `next dev` runs
 WEB_BUILD = ROOT / "demo/web/out"  # the static site from `next build` (npm run demo)
 BETWEEN_HANDS = 4.0
+POLL_WAIT = 20.0  # a long poll returns after this long without changes
+POLL_TIMEOUT = 45.0  # a polling client that hasn't polled for this long has left
 
 
 class Game:
@@ -54,17 +57,35 @@ class Game:
         self.task: asyncio.Task | None = None
         self.error: dict[str, str] = {}
         self.table_deadline: float | None = None  # when the human to act runs out of time
+        # HTTP long-polling fallback, for browsers where something blocks the WebSocket
+        self.version = 0  # bumped on every change; pollers wait for a newer one
+        self.changed = asyncio.Event()
+        self.polling: dict[str, float] = {}  # client id -> when it last polled
 
     # ------------------------------------------------------------- clients
 
+    def online(self) -> set[str]:
+        """Client ids with an open WebSocket or a recent poll."""
+        now = time.time()
+        recent = {cid for cid, t in self.polling.items() if now - t < POLL_TIMEOUT}
+        return set(self.clients) | recent
+
+    def view_for(self, cid: str) -> dict:
+        v = self.table.view(cid)
+        v["deadline"] = self.table_deadline
+        v["botDelay"] = self.bot_delay
+        v["connected"] = len(self.online())
+        v["version"] = self.version
+        if cid in self.error:
+            v["error"] = self.error.pop(cid)
+        return v
+
     async def broadcast(self) -> None:
+        self.version += 1
+        changed, self.changed = self.changed, asyncio.Event()
+        changed.set()  # wake every waiting long poll
         for cid, sockets in list(self.clients.items()):
-            v = self.table.view(cid)
-            v["deadline"] = self.table_deadline
-            v["botDelay"] = self.bot_delay
-            v["connected"] = len(self.clients)
-            if cid in self.error:
-                v["error"] = self.error.pop(cid)
+            v = self.view_for(cid)
             for ws in list(sockets):
                 try:
                     await ws.send_json(v)
@@ -136,7 +157,7 @@ class Game:
 
     async def wait_human(self, seat: int) -> Action:
         s = self.table.seats[seat]
-        if s.client is None or s.client not in self.clients:
+        if s.client is None or s.client not in self.online():
             await asyncio.sleep(0.4)
             return Action.fold()  # an empty or disconnected seat checks or folds
         self.pending = asyncio.get_running_loop().create_future()
@@ -163,10 +184,36 @@ def create_app(seed: int = 0) -> FastAPI:
         game.task.cancel()
 
     app = FastAPI(title="Poker-Bot demo", lifespan=lifespan)
+    # `next dev` on port 3000 polls this server cross-origin; it's a local demo, so allow all
+    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
+                       allow_headers=["*"])  # fmt: skip
 
     @app.get("/health")
     async def health() -> dict:
         return {"ok": True, "clients": len(game.clients) if game else 0}
+
+    @app.get("/api/poll")
+    async def poll(cid: str, since: int = -1) -> dict:
+        """Long poll: the client's view as soon as it's newer than ``since`` (or after
+        ``POLL_WAIT`` seconds). The fallback when a WebSocket can't be opened."""
+        cid = cid[:64]
+        new = cid not in game.online()
+        game.polling[cid] = time.time()
+        if new:
+            await game.broadcast()  # everyone sees the new connection count
+        elif since >= game.version:
+            changed = game.changed
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(changed.wait(), POLL_WAIT)
+        game.polling[cid] = time.time()
+        return game.view_for(cid)
+
+    @app.post("/api/send")
+    async def send(body: dict) -> dict:  # a JSON object: {clientId, msg}
+        cid = str(body.get("clientId", ""))[:64]
+        game.polling[cid] = time.time()
+        await game.handle(cid, dict(body.get("msg") or {}))
+        return {"ok": True}
 
     @app.websocket("/ws")
     async def ws(socket: WebSocket) -> None:

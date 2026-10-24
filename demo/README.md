@@ -32,6 +32,10 @@ connection come from the same address, so browser privacy features and extension
 cross-site to block. Once built, `uv run --extra demo python demo/server/main.py` alone starts it
 again.
 
+If something on your machine stalls WebSocket connections (antivirus web shields, proxies and
+some extensions do), the page switches to HTTP polling after 2.5 s and shows "via HTTP" in the
+top bar. Add `?http` to the address to force it.
+
 **Developing the client:** `npm run dev:all --prefix demo/web` runs the game server and `next dev`
 (hot reload) together; open http://localhost:3000. There the page talks to the game server on
 port 8000, a cross-site connection that some browser extensions block. Use a clean browser

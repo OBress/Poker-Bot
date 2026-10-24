@@ -13,7 +13,7 @@ const bbFmt = (chips: number, bb: number) => {
 };
 
 export default function PokerApp() {
-  const { view, status, error, send } = useTable();
+  const { view, status, transport, error, send } = useTable();
   const [reveal, setReveal] = useState(false);
   const [setup, setSetup] = useState(false);
   // the hand log starts open only on wide screens, where it clears the action bar
@@ -35,7 +35,7 @@ export default function PokerApp() {
     <div className="relative h-screen w-screen overflow-hidden bg-[#120d18] text-white">
       <Scene view={view} reveal={reveal} />
 
-      <TopBar view={view} status={status} send={send} reveal={reveal} setReveal={setReveal} openSetup={() => setSetup(true)} toggleLog={() => setShowLog((x) => !x)} />
+      <TopBar view={view} status={status} transport={transport} send={send} reveal={reveal} setReveal={setReveal} openSetup={() => setSetup(true)} toggleLog={() => setShowLog((x) => !x)} />
 
       {view.you === null && <JoinPanel view={view} send={send} />}
       {view.legal && <ActionBar legal={view.legal} bb={view.bigBlind} send={send} key={`${view.handNo}-${view.street}-${view.legal.toCall}-${view.legal.minRaiseTo}`} />}
@@ -51,8 +51,8 @@ export default function PokerApp() {
 
 type Send = (m: ClientMessage) => void;
 
-function TopBar({ view, status, send, reveal, setReveal, openSetup, toggleLog }: {
-  view: TableView; status: string; send: Send; reveal: boolean; setReveal: (b: boolean) => void;
+function TopBar({ view, status, transport, send, reveal, setReveal, openSetup, toggleLog }: {
+  view: TableView; status: string; transport: string; send: Send; reveal: boolean; setReveal: (b: boolean) => void;
   openSetup: () => void; toggleLog: () => void;
 }) {
   const me = view.you !== null ? view.seats[view.you] : null;
@@ -64,6 +64,7 @@ function TopBar({ view, status, send, reveal, setReveal, openSetup, toggleLog }:
         </div>
         <div className="text-xs text-white/60">
           {view.handNo > 0 ? `Hand #${view.handNo}` : "No hands yet"} · blinds 0.5/1 bb · {view.connected} connected
+          {transport === "http" && <span title="WebSocket blocked on this browser; using HTTP polling"> · via HTTP</span>}
           {status !== "open" && <span className="text-red-300"> · reconnecting</span>}
         </div>
       </div>
