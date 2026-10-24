@@ -6,15 +6,13 @@ import type { ClientMessage, TableView } from "./types";
 const PORT = process.env.NEXT_PUBLIC_SERVER_PORT ?? "8000";
 
 function clientId(): string {
-  // A stable id per browser, so a reload keeps your seat. `?player=2` gives a tab its own
-  // identity, for playing several people from one machine.
-  const slot = new URLSearchParams(window.location.search).get("player") ?? "";
-  const key = `pokerbot-client-id${slot}`;
+  // One player per browser tab: sessionStorage survives reloading the tab (so you keep your
+  // seat) but every tab gets its own id, so two tabs never fight over one seat.
   try {
-    let id = localStorage.getItem(key);
+    let id = sessionStorage.getItem("pokerbot-client-id");
     if (!id) {
       id = crypto.randomUUID();
-      localStorage.setItem(key, id);
+      sessionStorage.setItem("pokerbot-client-id", id);
     }
     return id;
   } catch {

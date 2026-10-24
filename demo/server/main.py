@@ -41,7 +41,8 @@ BETWEEN_HANDS = 4.0
 class Game:
     def __init__(self, seed: int) -> None:
         self.table = Table(seed)
-        self.clients: dict[str, WebSocket] = {}
+        # every open socket per client id; one person may have several tabs or a stale socket
+        self.clients: dict[str, set[WebSocket]] = {}
         self.wake = asyncio.Event()
         self.pending: asyncio.Future | None = None
         self.bot_delay = 0.9  # seconds a bot "thinks"
@@ -52,20 +53,18 @@ class Game:
     # ------------------------------------------------------------- clients
 
     async def broadcast(self) -> None:
-        dead = []
-        for cid, ws in list(self.clients.items()):
+        for cid, sockets in list(self.clients.items()):
             v = self.table.view(cid)
             v["deadline"] = self.table_deadline
             v["botDelay"] = self.bot_delay
             v["connected"] = len(self.clients)
             if cid in self.error:
                 v["error"] = self.error.pop(cid)
-            try:
-                await ws.send_json(v)
-            except Exception:  # noqa: BLE001 - a closed socket is cleaned up below
-                dead.append(cid)
-        for cid in dead:
-            self.clients.pop(cid, None)
+            for ws in list(sockets):
+                try:
+                    await ws.send_json(v)
+                except Exception:  # noqa: BLE001 - a closed socket just stops receiving
+                    sockets.discard(ws)
 
     async def handle(self, cid: str, msg: dict) -> None:
         t = self.table
@@ -177,11 +176,7 @@ def create_app(seed: int = 0) -> FastAPI:
         except WebSocketDisconnect:
             return  # closed before saying hello (e.g. a dev-mode double mount)
         cid = str(hello.get("clientId") or id(socket))[:64]
-        old = game.clients.get(cid)
-        if old is not None:
-            with contextlib.suppress(Exception):
-                await old.close()
-        game.clients[cid] = socket
+        game.clients.setdefault(cid, set()).add(socket)
         await game.broadcast()
         try:
             while True:
@@ -189,10 +184,17 @@ def create_app(seed: int = 0) -> FastAPI:
         except WebSocketDisconnect:
             pass
         finally:
-            if game.clients.get(cid) is socket:
-                del game.clients[cid]
-                if game.pending and game.table.actor_seat() == game.table.seat_of(cid):
-                    game.pending.set_result(Action.fold())
+            sockets = game.clients.get(cid, set())
+            sockets.discard(socket)
+            if not sockets:  # this person's last connection is gone
+                game.clients.pop(cid, None)
+                pending = game.pending
+                if (
+                    pending
+                    and not pending.done()
+                    and game.table.actor_seat() == game.table.seat_of(cid)
+                ):
+                    pending.set_result(Action.fold())
             await game.broadcast()
 
     return app

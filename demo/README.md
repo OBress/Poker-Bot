@@ -69,10 +69,10 @@ players by seat.
 
 ## Playing with other people
 
-The game server listens on all interfaces (port 8000) and `next dev` on port 3000. Friends on
-your network open `http://<your-computer's-IP>:3000`, pick an open seat and play. To try several
-people from one machine, open extra tabs as `http://localhost:3000/?player=2`, `?player=3`, and
-so on: each `player` value is a separate person.
+The game server listens on all interfaces, IPv4 and IPv6 (port 8000), and `next dev` on port
+3000. Friends on your network open `http://<your-computer's-IP>:3000`, pick an open seat and play.
+Every browser tab is its own person, and reloading a tab keeps its seat. To play several people
+from one machine, just open more tabs.
 
 - **Your turn:** you have 45 seconds; after that you check if you can, otherwise fold. A
   disconnected player checks or folds.
