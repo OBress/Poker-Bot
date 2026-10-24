@@ -139,7 +139,11 @@ def _at(d: dict, t: int) -> dict:
     return d[t] if t in d else d[str(t)]
 
 
-def write_report(results: dict, cfg: dict, run_id: str, out: Path, plot_dir: Path) -> None:
+def write_report(
+    results: dict, cfg: dict, run_id: str, out: Path, plot_dir: Path, notes: Path | None = None
+) -> None:
+    """``notes``: an optional hand-written interpretation, included after the hypotheses so
+    regenerating the report keeps it."""
     rel = plot_dir.relative_to(out.parent).as_posix()
     cfg_path = Path(cfg["path"]).as_posix()
     tr = results["tracks"]
@@ -179,6 +183,8 @@ def write_report(results: dict, cfg: dict, run_id: str, out: Path, plot_dir: Pat
         "weighted log-loss session score (MATH §6.3). A2/B2 test d > −margin (Leduc "
         f"{cfg['leduc']['margin']} chips/hand, heads-up {cfg['hu']['margin']} bb/100).",
     ]
+    if notes is not None and notes.exists():
+        lines += ["", "## Interpretation", "", notes.read_text(encoding="utf-8").strip()]
     names = {
         "leduc": "Track A — Leduc hold'em (exact values, CFR+ Nash baseline)",
         "hu": "Track B — heads-up no-limit hold'em (MCCFR blueprint baseline)",

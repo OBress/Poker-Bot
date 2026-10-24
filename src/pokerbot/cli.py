@@ -841,7 +841,8 @@ def _final_report(run_dir, cfg: dict, out: str, run=None) -> None:
     for p in plots(r, plot_dir):
         if run is not None:
             run.save_artifact(f"plots/{p.name}", p)
-    write_report(r, cfg, Path(run_dir).name, out_path, plot_dir)
+    notes = plot_dir / f"{cfg['version']}-notes.md"
+    write_report(r, cfg, Path(run_dir).name, out_path, plot_dir, notes)
     if run is not None:
         run.save_artifact("RESULTS.md", out_path)
     print(f"wrote {out_path} and plots in {plot_dir}")
