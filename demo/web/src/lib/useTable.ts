@@ -38,7 +38,9 @@ export function useTable() {
 
     const connect = () => {
       setStatus("connecting");
-      const socket = new WebSocket(`ws://${window.location.hostname}:${PORT}/ws`);
+      // The game server listens on IPv4 only; browsers may resolve "localhost" to ::1 first.
+      const host = window.location.hostname === "localhost" ? "127.0.0.1" : window.location.hostname;
+      const socket = new WebSocket(`ws://${host}:${PORT}/ws`);
       ws.current = socket;
       socket.onopen = () => {
         setStatus("open");
