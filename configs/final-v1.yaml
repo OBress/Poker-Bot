@@ -1,0 +1,76 @@
+# Phase 7 final experiment, pre-registration (docs/MATH.md §6–§7 scoring; docs/ROADMAP.md Phase 7).
+#
+# Registered 2026-10-24, before any of the session seeds below were played. Everything that
+# decides the outcome is fixed here: programs, seeds, session counts, metrics, tests, margins.
+# Re-run with:  uv run pokerbot final run --config configs/final-v1.yaml
+#
+# Honesty notes:
+# - The programs are frozen Phase 5/6 champions; nothing is tuned or selected in this run.
+# - The Phase 5/6 final evaluations used test-split indices 0-399 and the heads-up safety check
+#   used 10,000-21,999. This experiment uses a fresh block of the test seed range starting at
+#   index 1,000,000, so no session here has been seen by evolution, tuning or an earlier look.
+# - The held-out real players (Track C) are the same 300 used once in Phase 5: there is no
+#   second held-out set. They are secondary (descriptive) only.
+# - Margins were chosen after seeing the Phase 6 results (Leduc: the MATH §7.3 epsilon;
+#   heads-up: 5 bb/100), so they are stated before this run, not before the project.
+
+version: final-v1
+registered: "2026-10-24"
+first_index: 1000000 # first test-split session index used by every track
+workers: 8
+alpha: 0.01 # family-wise, Holm-Bonferroni over the primary hypotheses (one-sided tests)
+bootstrap: { resamples: 4000, seed: 0 } # 95% CIs over sessions, reported for every number
+
+leduc: # Track A: exact duplicate values per hand vs the CFR+ Nash baseline (chips/hand)
+  sessions: 1000 # 100 hands each; 70% style, 15% Nash, 15% switcher sessions
+  safety_sessions: 1000 # extra Nash-only sessions for the safety test
+  margin: 0.01 # non-inferiority margin vs the baseline itself, chips/hand
+  beliefs: [classifier, oracle, prior, argmax]
+  programs:
+    evolved:
+      path: programs/exploiter_leduc/champion-20261021-204914-evolve-exploiter-leduc.py
+      params: programs/exploiter_leduc/champion-20261021-204914-evolve-exploiter-leduc.json
+    seed:
+      path: programs/exploiter_leduc/seed.py
+      params: programs/exploiter_leduc/seed.tuned.json
+
+hu: # Track B: heads-up no-limit, duplicate with all-in EV, vs the MCCFR blueprint (bb/100)
+  sessions: 1000 # 200 hands each; same session mix
+  safety_sessions: 2000
+  margin: 5.0 # bb/100
+  beliefs: [classifier, oracle, prior, argmax]
+  programs:
+    evolved:
+      path: programs/exploiter_hu/champion-20261022-230930-evolve-exploiter-hu-2.py
+      params: programs/exploiter_hu/champion-20261022-230930-evolve-exploiter-hu-2.json
+    seed:
+      path: programs/exploiter_hu/seed.py
+      params: programs/exploiter_hu/seed.tuned.json
+
+classifier: # Track C: 6-max style classification (weighted log loss, MATH §6.3)
+  format: sh
+  sessions: 480 # tables of 6 calibrated bots (2,880 seats), 200 hands each
+  bots: profiles/bots-v3.json
+  profiles: profiles/styles-v1.json
+  showdowns: data/processed/showdown_ranges.json
+  real: data/processed/clf/sh-real.pkl.xz
+  data: data/processed/clf/sh-final-v1.pkl.xz # built from the seeds above if missing
+  programs:
+    evolved:
+      path: programs/classifier/champion-20261021-064929-evolve-classifier-sh.py
+      params: programs/classifier/champion-20261021-064929-evolve-classifier-sh.json
+    seed_a:
+      path: programs/classifier/seed_a.py
+      params: programs/classifier/seed_a.tuned.json
+    seed_b:
+      path: programs/classifier/seed_b.py
+
+# Primary hypotheses (one-sided; decided only by these tests):
+#   A1 leduc edge:    evolved (classifier beliefs) d vs style players > 0           (t-test, sessions)
+#   A2 leduc safety:  evolved d vs the baseline itself > -margin   (safety sessions, non-inferiority)
+#   A3 leduc evolved: evolved - seed paired session score (MATH §7.3 fitness) > 0
+#   B1 hu edge, B2 hu safety, B3 hu evolved: the same for Track B
+#   C1 classifier:    evolved - seed_a paired session score (-Σ w_t LL_t) > 0
+# Secondary (reported, not decided): switchers; per style; belief ablations (oracle labels,
+# prior only = no classifier, argmax = no confidence); seed_b; accuracy and ECE by hands seen;
+# held-out real players' cross-entropy; edge vs hands played.

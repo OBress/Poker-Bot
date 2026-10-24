@@ -198,7 +198,8 @@ def _payoff(result, seat: int, deck_seed: int) -> float:
 
 
 def run_session(make, spec: SessionSpec, beliefs_mode: str = "classifier") -> dict:
-    """``make()`` -> a fresh Exploiter program. beliefs_mode: classifier | oracle | prior."""
+    """``make()`` -> a fresh Exploiter program. beliefs_mode: classifier | oracle | prior |
+    argmax (the classifier's top style as one-hot beliefs: no confidence information)."""
     prof = profiles()
     plan = opponent_plan(spec)
     rng = np.random.default_rng(spec.seed + 7)
@@ -224,6 +225,8 @@ def run_session(make, spec: SessionSpec, beliefs_mode: str = "classifier") -> di
             b = prof.shares.copy()
         else:
             b, _ = _valid(clf.posterior(1, feats), prof.k)
+            if beliefs_mode == "argmax":
+                b = np.eye(prof.k)[int(b.argmax())]
         b.setflags(write=False)
         seat.beliefs = b
         stacks = [100 * BB, int(round(opp.buyin_bb * BB))]

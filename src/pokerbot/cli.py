@@ -771,6 +771,93 @@ def _tables() -> None:
     pl.Config.set_tbl_hide_column_data_types(True)
 
 
+def cmd_final_run(args: argparse.Namespace) -> None:
+    """Phase 7: the pre-registered final experiment, every track, one tracked run."""
+    from pathlib import Path
+
+    from pokerbot.experiment import load_config
+    from pokerbot.experiment import run as run_experiment
+    from pokerbot.track import Run
+
+    cfg = load_config(Path(args.config))
+    data = {"config": Path(args.config)}
+    for key in ("leduc", "hu", "classifier"):
+        for name, spec in cfg.get(key, {}).get("programs", {}).items():
+            data[f"{key}_{name}"] = Path(spec["path"])
+            if spec.get("params"):
+                data[f"{key}_{name}_params"] = Path(spec["params"])
+    for f in ("profiles/blueprint-hu-v1.npz", "profiles/baseline-leduc-v1.json",
+              "profiles/bots-v3.json", "profiles/equilibrium-hu-v1.json"):  # fmt: skip
+        if Path(f).exists():
+            data[Path(f).stem] = Path(f)
+
+    with Run.start(f"final-{cfg['version']}", kind="eval", config=cfg, data=data) as run:
+
+        def log(msg: str) -> None:
+            print(msg, flush=True)
+            run.event("note", text=msg)
+
+        r = run_experiment(cfg, log=log)
+        run.save_artifact("results.json", r)
+        for h, v in r["hypotheses"].items():
+            run.log_metrics({f"test/{h}_estimate": v["estimate"], f"test/{h}_p": v["p"],
+                             f"test/{h}_supported": float(v["supported"])})  # fmt: skip
+        for game in ("leduc", "hu"):
+            t = r["tracks"].get(game)
+            if not t:
+                continue
+            for pname, modes in t["programs"].items():
+                for mode, e in modes.items():
+                    for kind in ("style", "nash", "switch"):
+                        run.log_metrics({f"test/delta_{kind}": e[kind]["mean"],
+                                         f"test/delta_{kind}_ci_lo": e[kind]["ci95"][0],
+                                         f"test/delta_{kind}_ci_hi": e[kind]["ci95"][1],
+                                         f"test/sessions_{kind}": e[kind]["sessions"]},
+                                        track=game, program=pname, beliefs=mode)  # fmt: skip
+            safety = {"test/safety": t["safety"]["mean"],
+                      "test/safety_sessions": t["safety"]["sessions"]}  # fmt: skip
+            run.log_metrics(safety, track=game)
+        c = r["tracks"].get("classifier")
+        if c:
+            for name, e in c["programs"].items():
+                for t_, v in e["test"].items():
+                    if isinstance(v, dict):
+                        run.log_metrics({f"test/logloss@{t_}": v["logloss"],
+                                         f"test/accuracy@{t_}": v["accuracy"]},
+                                        track="classifier", program=name)  # fmt: skip
+        _final_report(run.dir, cfg, args.out, run)
+    print(f"run {run.dir.name}")
+
+
+def _final_report(run_dir, cfg: dict, out: str, run=None) -> None:
+    import json
+    from pathlib import Path
+
+    from pokerbot.experiment_report import plots, write_report
+
+    r = json.loads((Path(run_dir) / "artifacts" / "results.json").read_text(encoding="utf-8"))
+    out_path = Path(out)
+    plot_dir = out_path.parent / "results"
+    for p in plots(r, plot_dir):
+        if run is not None:
+            run.save_artifact(f"plots/{p.name}", p)
+    write_report(r, cfg, Path(run_dir).name, out_path, plot_dir)
+    if run is not None:
+        run.save_artifact("RESULTS.md", out_path)
+    print(f"wrote {out_path} and plots in {plot_dir}")
+
+
+def cmd_final_report(args: argparse.Namespace) -> None:
+    """Rebuild docs/RESULTS.md and plots from a finished final run's results.json."""
+    from pathlib import Path
+
+    from pokerbot.experiment import load_config
+    from pokerbot.track import find_run
+
+    run_dir = find_run(args.run)
+    _final_report(run_dir, load_config(Path(args.config)), args.out)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="pokerbot")
     sub = parser.add_subparsers(required=True)
@@ -1030,6 +1117,17 @@ def main(argv: list[str] | None = None) -> None:
     ec.add_argument("--seed", type=int, default=0)
     ec.add_argument("--out-dir", default="programs/classifier")
     ec.set_defaults(func=cmd_evolve_classifier)
+
+    fin = sub.add_parser("final", help="Phase 7 final experiment").add_subparsers(required=True)
+    fr = fin.add_parser("run", help="run the pre-registered final experiment")
+    fr.add_argument("--config", default="configs/final-v1.yaml")
+    fr.add_argument("--out", default="docs/RESULTS.md")
+    fr.set_defaults(func=cmd_final_run)
+    fp = fin.add_parser("report", help="rebuild RESULTS.md and plots from a final run")
+    fp.add_argument("run", help="run id or 'latest'")
+    fp.add_argument("--config", default="configs/final-v1.yaml")
+    fp.add_argument("--out", default="docs/RESULTS.md")
+    fp.set_defaults(func=cmd_final_report)
 
     runs = sub.add_parser("runs", help="tracked experiment runs").add_subparsers(required=True)
     runs.add_parser("list", help="all runs").set_defaults(func=cmd_runs_list)

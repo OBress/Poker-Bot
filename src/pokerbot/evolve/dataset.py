@@ -65,14 +65,17 @@ def path_for(fmt: str, split: str, root: Path = ROOT) -> Path:
 
 
 def build(bots_path: Path, fmt: str, split: str, sessions: int, workers: int = 8,
-          root: Path = ROOT, equilibrium: str | None = None) -> Path:  # fmt: skip
+          root: Path = ROOT, equilibrium: str | None = None, first_index: int = 0,
+          out: Path | None = None) -> Path:  # fmt: skip
     """``equilibrium``: a policy spec (e.g. ``blueprint:<path>``) that takes seats as an extra
-    style (label K); pair with ``StyleProfiles.load(..., equilibrium_path=...)``."""
-    base = SPLITS[split] * 10_000_000
+    style (label K); pair with ``StyleProfiles.load(..., equilibrium_path=...)``.
+    ``first_index``/``out``: a further block of the split's seed range in its own file (the
+    Phase 7 final experiment uses fresh test seeds this way)."""
+    base = SPLITS[split] * 10_000_000 + first_index
     jobs = [(str(bots_path), fmt, base + i, equilibrium) for i in range(sessions)]
     with ProcessPoolExecutor(workers) as pool:
         data = list(pool.map(_session, jobs, chunksize=4))
-    out = path_for(fmt, split, root)
+    out = Path(out) if out else path_for(fmt, split, root)
     out.parent.mkdir(parents=True, exist_ok=True)
     with lzma.open(out, "wb", preset=6) as f:
         pickle.dump({"fmt": fmt, "split": split, "bots": str(bots_path), "sessions": data}, f,
