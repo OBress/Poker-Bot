@@ -327,7 +327,30 @@ real-player transfer of the exploiter is untested.
 **Exit:** Δ bb/100 > 0 with 95% CI excluding zero on test seeds in Track A and B; loss vs the
 baseline itself and vs switchers within a pre-set tolerance.
 
-## Phase 7 — Final experiment and write-up
+## Phase 7 — Final experiment and write-up ✅
+
+Done: pre-registration `configs/final-v1.yaml`, committed (b5ad907) before any registered session
+was played. It fixes the programs, fresh test seeds from index 1,000,000, the session counts, the
+margins, and seven one-sided primary hypotheses with Holm-Bonferroni at family α = 0.01. One
+command runs everything (`uv run pokerbot final run`; `pokerbot.experiment`) and writes
+[RESULTS.md](RESULTS.md) with plots and each champion's lineage. Run
+20261024-210907-final-final-v1, 34 minutes on 8 workers:
+
+| | Result |
+|---|---|
+| A1 Leduc edge vs style players | **+0.511 chips/hand [+0.497, +0.525]**, supported |
+| A2 Leduc vs Nash itself (margin 0.01) | −0.002 [−0.003, −0.001], supported |
+| A3 Leduc evolved vs seed | +0.246 [+0.233, +0.260], supported |
+| B1 heads-up edge vs style bots | **+106.7 bb/100 [+97.3, +116.1]**, supported |
+| B2 heads-up vs the blueprint itself (margin 5) | −3.0 [−7.2, +1.5], **not supported** |
+| B3 heads-up evolved vs seed | +72.3 [+61.9, +82.9], supported |
+| C1 6-max classifier vs seed A | +0.104 [+0.090, +0.118], supported |
+
+So 6 of 7 hypotheses are supported. Against the blueprint itself, a heads-up loss of up to about
+7 bb/100 can't be ruled out. The ablations show what the classifier does: it keeps the program
+from exploiting an equilibrium player (heads-up, prior only: −22.6 vs the blueprint), more than
+it adds edge. Next: exploiter checks against real-player behavior (behavior-cloned opponents),
+a Track C exploiter, and a heads-up variant that meets the safety margin.
 
 - Pre-register: seeds, hand counts, metrics, tolerance.
 - Run full evaluations; per-style breakdown; ablations (no classifier / oracle labels / no
