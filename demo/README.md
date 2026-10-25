@@ -41,21 +41,35 @@ top bar. Add `?http` to the address to force it.
 port 8000, a cross-site connection that some browser extensions block. Use a clean browser
 profile if it can't connect.
 
-## Who's at the table
+## Modes
 
-Use **Seats** to set each of the 8 seats. Seat changes apply between hands, so pause first.
+The home screen starts a new game, continues the one in progress, or opens your past games.
+Starting a new game ends the current one; every game stays in your history.
+
+- **Cash game:** play as long as you like at the 8-seat table: you in seat 1, two PokerBots
+  and five calibrated bots. Change seats between hands under **⋯ → Seats**.
+- **Read me:** play 50 or 100 hands at a fixed table. At the end, PokerBot shows what kind of
+  player it thinks you are: each style's probability, how the read moved hand by hand, and your
+  stats (VPIP, preflop raises, 3-bets, folds to flop bets and so on) next to each style's
+  typical numbers.
+
+In either mode, **What does PokerBot think of me?** in the top bar shows the read on you so far.
+**Show reads** puts PokerBot's live read over every player's head; it's off by default.
+**⋯ → Reveal bots' true styles** shows what each bot really is, to check the reads against.
+
+Every game is saved to `demo/data/games/` after each hand (git-ignored). **All past games**
+lists them; each one shows the reads, every player's result with the read marked right or wrong
+for the bots, and the full hand log.
+
+## Who's at the table
 
 | Seat | What it is |
 |---|---|
-| PokerBot (engine) | The project's engine; see below. Its live read of every player shows over their head. |
+| PokerBot (engine) | The project's engine; see below. |
 | Calibrated bot | A rule-based bot drawn from the full-ring styles fitted to real players (`profiles/bots-v3.json`): Loose-passive, Passive limper, Weak-tight, TAG, Nit, Short-stacker. |
 | TAG baseline | The fixed tight-aggressive reference bot (`abc_tag`). |
 | Open seat (person) | A seat for a human. |
 | Empty | Nobody. |
-
-By default you're in seat 1, against two PokerBots and five calibrated bots. **Reveal bot
-styles** shows each bot's true style next to PokerBot's read, so you can watch the classifier
-work it out.
 
 **How PokerBot plays:**
 
@@ -67,8 +81,9 @@ work it out.
   base strategy is then tilted toward the live opponents' weaknesses: more bluffs and steals
   against folders, thinner value bets and fewer bluffs against callers.
 
-PokerBot's memory resets whenever the set of players changes, because both classifiers track
-players by seat.
+The reads you see come from the same classifier run over every hand by the table itself, so
+they exist even with no PokerBot seated. Reads, and PokerBot's memory, reset whenever the set of
+players changes, because the classifiers track players by seat.
 
 ## Playing with other people
 
@@ -78,14 +93,16 @@ Every browser tab is its own person, and reloading a tab keeps its seat. To play
 from one machine, just open more tabs.
 
 - **Your turn:** you have 45 seconds; after that you check if you can, otherwise fold. A
-  disconnected player checks or folds.
+  disconnected player checks or folds, and **⋯ → Stand up** folds your hand at once, so the
+  game never waits on someone who left.
 - **Keys:** F fold, C check/call, R bet/raise to the slider amount.
 - **Chips:** blinds are 0.5/1 bb, everyone starts with 100 bb (bots with their calibrated
   buy-in), and a busted seat rebuys to 100 bb.
 
 ## Notes
 
-- This is a local demo: no accounts, no persistence, one table per server.
+- This is a local demo: no accounts, one game at a time per server. A game in progress is lost
+  if the server stops; its hands so far are already in your history.
 - The web app is pinned to Next.js 16.4.0. Its advisories (GHSA-2464-fhr4-w9xw,
   GHSA-p3m5-59mp-jv5r, GHSA-673q-mjm6-r5xr) cover image optimization of SVGs, Server Actions
   and `use cache`, none of which the demo uses. Upgrade to 16.4.3 when your npm

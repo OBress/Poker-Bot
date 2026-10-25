@@ -16,6 +16,18 @@ body {
 
 @layer components {
   .btn {
-    @apply rounded-lg px-3 py-1.5 text-sm font-semibold text-white transition-colors disabled:opacity-40;
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-40;
+  }
+  .btn-primary {
+    @apply bg-teal-600 hover:bg-teal-500;
+  }
+  .btn-ghost {
+    @apply bg-white/10 hover:bg-white/20;
+  }
+  .btn-danger {
+    @apply bg-red-700 hover:bg-red-600;
+  }
+  .card {
+    @apply rounded-2xl border border-white/10 bg-white/[0.04] p-5 shadow-lg;
   }
 }
