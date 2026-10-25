@@ -20,3 +20,6 @@ experiments/
 Thumbs.db
 .vscode/
 .idea/
+
+# Demo game records (demo/server/history.py)
+demo/data/
