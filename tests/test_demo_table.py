@@ -72,3 +72,56 @@ def test_seat_rules() -> None:
     t.configure(3, "empty")
     t.sit("b", "B", 3)
     assert t.seats[3].kind == "human" and t.seats[3].stack == BUYIN
+
+
+def test_read_challenge_ends_after_its_hands_with_a_read_and_a_record(tmp_path) -> None:
+    import json
+
+    from demo.server import history
+
+    t = Table(7, mode="read", target=12)
+    t.sit("me", "Owen", 0)
+    t.running = True
+    _play(t, 12)
+    assert t.finished and not t.running and not t.start_hand()
+    me = t.view("me")["myRead"]
+    assert me["hands"] == 12 and abs(sum(me["probs"].values()) - 1) < 1e-6
+    assert len(me["trajectory"]) == 12 and {s["key"] for s in me["stats"]} >= {"vpip", "pfr"}
+    vpip = next(s for s in me["stats"] if s["key"] == "vpip")
+    assert vpip["n"] == 12 and set(vpip["styles"]) == set(me["probs"])
+    assert t.view(None)["finalReads"]["0"]["style"] == me["style"]
+    history.save(t.record(), tmp_path)
+    (row,) = history.summaries(tmp_path)
+    assert row["mode"] == "read" and row["hands"] == 12 and row["humans"][0]["name"] == "Owen"
+    assert json.loads(json.dumps(history.load(t.id, tmp_path)))["players"]
+
+
+def test_standing_up_on_your_turn_does_not_stall_the_game(tmp_path, monkeypatch) -> None:
+    import asyncio
+
+    from demo.server import history
+    from demo.server.main import Game
+
+    monkeypatch.setattr(history, "GAMES", tmp_path)
+
+    async def scenario() -> int:
+        g = Game(0)
+        g.clients["me"] = set()  # connected, as far as the server knows
+        g.new_game("me", "Owen", "cash", None)
+        g.bot_delay = 0.0
+        await g.handle("me", {"type": "start"})
+        for _ in range(400):  # until it's my turn
+            if g.pending is not None:
+                break
+            await asyncio.sleep(0.01)
+        assert g.pending is not None
+        hand = g.table.hand_no
+        await g.handle("me", {"type": "leave"})
+        for _ in range(400):  # the hand finishes without waiting out my 45 s clock
+            if g.table.hand_no > hand:
+                break
+            await asyncio.sleep(0.01)
+        g.stop_loop()
+        return g.table.hand_no - hand
+
+    assert asyncio.run(scenario()) >= 1

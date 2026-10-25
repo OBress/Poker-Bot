@@ -232,7 +232,7 @@ function Avatar({ seat, active, winner }: { seat: SeatView; active: boolean; win
   );
 }
 
-function Nameplate({ seat, view, reveal, active }: { seat: SeatView; view: TableView; reveal: boolean; active: boolean }) {
+function Nameplate({ seat, view, reveal, showReads, active }: { seat: SeatView; view: TableView; reveal: boolean; showReads: boolean; active: boolean }) {
   const bb = view.bigBlind;
   const won = view.results?.winners.find((w) => w.seat === seat.index);
   return (
@@ -249,8 +249,8 @@ function Nameplate({ seat, view, reveal, active }: { seat: SeatView; view: Table
         <div className="mt-0.5 text-xs text-sky-200">{seat.lastAction}</div>
       ) : null}
       {active && view.deadline && <Countdown deadline={view.deadline} />}
-      {seat.read && (
-        <div className="mt-1 rounded-md bg-teal-900/60 px-1 py-0.5 text-[10px] leading-tight text-teal-100" title={seat.read.top.map((t) => `${t.style} ${(t.p * 100).toFixed(0)}%`).join(", ")}>
+      {showReads && seat.read && (
+        <div className="mt-1 rounded-md bg-teal-900/60 px-1 py-0.5 text-[10px] leading-tight text-teal-100" title={Object.entries(seat.read.probs).slice(0, 3).map(([k, p]) => `${k} ${(p * 100).toFixed(0)}%`).join(", ")}>
           PokerBot reads: <b>{seat.read.style}</b> {(seat.read.confidence * 100).toFixed(0)}%
           <span className="text-teal-300/70"> · {seat.read.hands}h</span>
         </div>
@@ -271,7 +271,7 @@ function Countdown({ deadline }: { deadline: number }) {
   return <div className="text-[11px] text-sky-300">{Math.max(0, Math.round(deadline - now / 1000))}s</div>;
 }
 
-function SeatGroup({ seat, slot, view, reveal }: { seat: SeatView; slot: number; view: TableView; reveal: boolean }) {
+function SeatGroup({ seat, slot, view, reveal, showReads }: { seat: SeatView; slot: number; view: TableView; reveal: boolean; showReads: boolean }) {
   const active = view.actor === seat.index;
   const winner = !!view.results?.winners.some((w) => w.seat === seat.index);
   const pos = around(slot, 1.3, 1.45, 0);
@@ -289,7 +289,7 @@ function SeatGroup({ seat, slot, view, reveal }: { seat: SeatView; slot: number;
       )}
       <Html position={[pos[0], 1.75, pos[2]]} center zIndexRange={[10, 0]}>
         {own ? null : seat.occupied ? (
-          <Nameplate seat={seat} view={view} reveal={reveal} active={active} />
+          <Nameplate seat={seat} view={view} reveal={reveal} showReads={showReads} active={active} />
         ) : (
           <div className="rounded-lg bg-black/40 px-2 py-1 text-xs text-white/50 select-none">{seat.kind === "human" ? "Open seat" : "Empty"}</div>
         )}
@@ -386,7 +386,7 @@ function Board({ view }: { view: TableView }) {
   );
 }
 
-export default function Scene({ view, reveal }: { view: TableView; reveal: boolean }) {
+export default function Scene({ view, reveal, showReads }: { view: TableView; reveal: boolean; showReads: boolean }) {
   const me = view.you ?? 0;
   return (
     <Canvas shadows camera={{ position: [0, 4.9, 8.3], fov: 48 }} dpr={[1, 2]}>
@@ -399,7 +399,7 @@ export default function Scene({ view, reveal }: { view: TableView; reveal: boole
       <TableModel />
       <ContactShadows position={[0, 0.002, 0]} scale={[RX * 2.2, RZ * 2.2]} opacity={0.35} blur={2.2} far={1} />
       {view.seats.map((s) => (
-        <SeatGroup key={s.index} seat={s} slot={(s.index - me + SEATS) % SEATS} view={view} reveal={reveal} />
+        <SeatGroup key={s.index} seat={s} slot={(s.index - me + SEATS) % SEATS} view={view} reveal={reveal} showReads={showReads} />
       ))}
       <Board view={view} />
       <OrbitControls target={[0, 0, 0.3]} enablePan={false} minDistance={4} maxDistance={13} minPolarAngle={0.25} maxPolarAngle={1.25} />

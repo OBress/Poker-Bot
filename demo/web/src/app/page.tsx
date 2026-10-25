@@ -1,5 +1,5 @@
-import PokerApp from "@/components/PokerApp";
+import App from "@/components/App";
 
 export default function Home() {
-  return <PokerApp />;
+  return <App />;
 }

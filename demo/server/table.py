@@ -5,6 +5,15 @@ from the full-ring population (``profiles/bots-v3.json``), or the TAG baseline. 
 to every occupied seat; the engine's ``HandState`` uses hand-local indices 0..n-1, which map to
 table seats in order. Busted seats rebuy to 100 big blinds before the next hand.
 
+Two modes:
+- ``cash``: open-ended; seats can be changed between hands.
+- ``read``: a fixed table for ``target`` hands, after which the game ends and shows how
+  PokerBot classified each human.
+
+Besides the PokerBot seats, the table runs its own ``reader`` (the same classifier, not
+seated) over every hand, so reads of every player exist whoever sits at the table. Reads only
+use public information.
+
 ``Table`` is pure game logic. ``main.py`` drives it with asyncio, asks bots for actions in a
 worker thread, waits for humans, and sends every client its own view (``view``), which only
 ever contains public information plus that client's hole cards.
@@ -12,7 +21,8 @@ ever contains public information plus that client's hole cards.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -32,12 +42,32 @@ SEATS = 8
 SB, BB = 50, 100
 BUYIN = 100 * BB
 KINDS = ("empty", "human", "pokerbot", "bot", "tag")
+MODES = ("cash", "read")
 STREETS = {
     Street.PREFLOP: "preflop",
     Street.FLOP: "flop",
     Street.TURN: "turn",
     Street.RIVER: "river",
 }
+# What each full-ring style looks like (profiles/styles-v1.json, "fr"), in plain words
+STYLE_INFO = {
+    "Loose-passive": "Plays a lot of hands but mostly calls; rarely takes the lead.",
+    "Passive limper": "Limps into pots and almost never raises before the flop.",
+    "Weak-tight": "Plays few hands and gives up easily when someone bets.",
+    "TAG": "Tight-aggressive: picks good hands and plays them with bets and raises.",
+    "Nit": "Very tight and cautious: waits for strong hands.",
+    "Short-stacker": "Buys in short and plays a narrow, all-in-heavy game.",
+}
+# Stats shown next to a read: (tracker/profile key, label)
+STATS = (
+    ("vpip", "Plays the hand (VPIP)"),
+    ("pfr", "Raises before the flop"),
+    ("limp", "Limps in"),
+    ("3bet", "3-bets"),
+    ("fold_to_cbet_flop", "Folds to a flop bet"),
+    ("agg_flop", "Bets or raises on the flop"),
+    ("wtsd", "Goes to showdown"),
+)
 
 
 @dataclass
@@ -49,21 +79,28 @@ class Seat:
     client: str | None = None  # human: the client id that holds the seat
     policy: object = None
     style_name: str = ""  # bot: its true style (revealed in the UI only when asked)
-    sitting_out: bool = False
     last_action: str = ""
     net: int = 0  # chips won or lost since the table started
+    hands: int = 0  # hands dealt to this seat
 
 
 @dataclass
 class HandInfo:
     state: HandState
     seats: list[int]  # hand-local index -> table seat
-    log: list[str] = field(default_factory=list)
 
 
 class Table:
-    def __init__(self, seed: int = 0) -> None:
+    def __init__(self, seed: int = 0, mode: str = "cash", target: int | None = None) -> None:
+        if mode not in MODES:
+            raise ValueError(f"unknown mode {mode!r}")
         self.rng = np.random.default_rng(seed)
+        self.seed = seed
+        self.mode = mode
+        self.target = target if mode == "read" else None
+        self.id = time.strftime("%Y%m%d-%H%M%S") + f"-{mode}"
+        self.started = time.time()
+        self.ended: float | None = None
         self.sampler = StyleSampler(BOTS, "fr")
         self.seats = [Seat() for _ in range(SEATS)]
         self.button = 0
@@ -73,13 +110,16 @@ class Table:
         self.log: list[str] = []
         self.results: dict | None = None  # last hand's showdown and winners
         self.composition: tuple | None = None
-        self.reads: dict[int, dict] = {}  # PokerBot's read per table seat, refreshed per hand
+        self.local: dict[int, int] = {}  # table seat -> hand-local index, current composition
+        self.reader = EngineSeat(seed)  # classifies everyone, seated or not
+        self.reads: dict[int, dict] = {}  # read per table seat, refreshed after every hand
+        self.trajectory: dict[int, list[dict]] = {}  # human seat -> read after each hand
         self.default_setup()
 
     # ------------------------------------------------------------- setup
 
     def default_setup(self) -> None:
-        """You in seat 0, two PokerBots, five calibrated bots of different styles."""
+        """Seat 1 for you, two PokerBots, five calibrated bots of different styles."""
         layout = ["human", "bot", "pokerbot", "bot", "bot", "pokerbot", "bot", "bot"]
         styles = [None, 0, None, 4, 1, None, 2, 3]
         for i, (kind, style) in enumerate(zip(layout, styles, strict=True)):
@@ -115,15 +155,24 @@ class Table:
                 other.client, other.name = None, "Open seat"
         if s.kind == "empty":
             self.configure(i, "human")
-        s.client, s.name, s.sitting_out = client, name[:16] or "Player", False
+        s.client, s.name = client, name[:16] or "Player"
 
-    def leave(self, client: str) -> None:
-        for s in self.seats:
+    def leave(self, client: str) -> int | None:
+        """Stand up; returns the seat that was left (its live hand is folded by the caller)."""
+        for i, s in enumerate(self.seats):
             if s.client == client:
                 s.client, s.name = None, "Open seat"
+                return i
+        return None
 
-    def seat_of(self, client: str) -> int | None:
+    def seat_of(self, client: str | None) -> int | None:
+        if client is None:
+            return None
         return next((i for i, s in enumerate(self.seats) if s.client == client), None)
+
+    @property
+    def finished(self) -> bool:
+        return self.target is not None and self.hand_no >= self.target
 
     # ------------------------------------------------------------- hands
 
@@ -137,19 +186,23 @@ class Table:
 
     def start_hand(self) -> bool:
         seats = self.dealt_seats()
-        if len(seats) < 2:
+        if len(seats) < 2 or self.finished:
             return False
         for i in seats:  # rebuy
             if self.seats[i].stack < BB:
                 self.seats[i].stack = BUYIN
                 self._note(f"{self.seats[i].name} rebuys for {BUYIN // BB} bb")
-        comp = tuple((i, self.seats[i].kind, id(self.seats[i].policy)) for i in seats)
+        comp = tuple(
+            (i, self.seats[i].kind, self.seats[i].client, id(self.seats[i].policy)) for i in seats
+        )
         if comp != self.composition:
             self.composition = comp
             for i in seats:
                 if isinstance(self.seats[i].policy, EngineSeat):
                     self.seats[i].policy.reset(len(seats))
+            self.reader.reset(len(seats))
             self.reads = {}
+        self.local = {t: j for j, t in enumerate(seats)}
         while self.button not in seats:
             self.button = (self.button + 1) % SEATS
         state = HandState(
@@ -209,6 +262,7 @@ class Table:
             seat = h.seats[j]
             self.seats[seat].stack += pay
             self.seats[seat].net += pay
+            self.seats[seat].hands += 1
             if pay > 0:
                 winners.append({"seat": seat, "amount": pay + st.contrib[j]})
                 self._note(
@@ -219,26 +273,103 @@ class Table:
             p = self.seats[seat].policy
             if isinstance(p, EngineSeat):
                 p.observe_hand(st.events, j)
+        self.reader.observe_hand(st.events, 0)
         self.results = {"shown": shown, "mucked": mucked, "winners": winners}
         self.reads = self._reads()
         self.hand_no += 1
+        for seat, r in self.reads.items():
+            if self.seats[seat].kind == "human":
+                self.trajectory.setdefault(seat, []).append(
+                    {"hand": self.hand_no, "probs": r["probs"]}
+                )
+        if self.finished:
+            self.running = False
+            self.ended = time.time()
+            self._note(f"Game over after {self.hand_no} hands")
         seats = self.dealt_seats()
         nxt = [i for i in seats if i > self.button] or seats
         self.button = nxt[0] if nxt else self.button
 
+    def fold_out(self, seat: int) -> bool:
+        """If ``seat`` is to act in the live hand, fold it (a player who stood up)."""
+        if self.actor_seat() == seat:
+            self.apply(Action.fold())
+            return True
+        return False
+
     def _note(self, text: str) -> None:
         self.log.append(text)
-        del self.log[:-200]
+
+    # ------------------------------------------------------------- reads
+
+    def _reads(self) -> dict[int, dict]:
+        """The reader's current read of every non-PokerBot seat in the current composition."""
+        out = {}
+        for j, r in self.reader.reads().items():
+            seat = self.hand.seats[j]
+            if isinstance(self.seats[seat].policy, EngineSeat):
+                continue
+            probs = dict(sorted(r.probs.items(), key=lambda kv: -kv[1]))
+            out[seat] = {
+                "style": r.style,
+                "confidence": r.confidence,
+                "hands": r.hands,
+                "probs": probs,
+            }
+        return out
+
+    def stats(self, seat: int) -> list[dict]:
+        """This seat's observed rates next to every full-ring style's average."""
+        j = self.local.get(seat)
+        counts = self.reader.tracker.features(j).counts if j is not None else {}
+        prof = fr_profiles()
+        out = []
+        for key, label in STATS:
+            n, x = counts.get(key, (0, 0))
+            col = prof.features.index(key)
+            out.append(
+                {
+                    "key": key,
+                    "label": label,
+                    "n": int(n),
+                    "x": int(x),
+                    "rate": x / n if n else None,
+                    "styles": {
+                        name: float(prof.pooled_rate[k, col]) for k, name in enumerate(prof.names)
+                    },
+                }
+            )
+        return out
+
+    def read_detail(self, seat: int) -> dict | None:
+        r = self.reads.get(seat)
+        if r is None:
+            return None
+        return {
+            **r,
+            "stats": self.stats(seat),
+            "trajectory": self.trajectory.get(seat, []),
+            "about": STYLE_INFO.get(r["style"], ""),
+        }
 
     # ------------------------------------------------------------- views
 
+    def game_info(self) -> dict:
+        return {
+            "id": self.id,
+            "mode": self.mode,
+            "target": self.target,
+            "hands": self.hand_no,
+            "finished": self.finished,
+            "started": self.started,
+        }
+
     def view(self, client: str | None) -> dict:
         """Everything one client may see."""
-        me = self.seat_of(client) if client else None
+        me = self.seat_of(client)
         h = self.hand
         st = h.state if h else None
         local = {t: j for j, t in enumerate(h.seats)} if h else {}
-        reads = self.reads
         seats = []
         for i, s in enumerate(self.seats):
             j = local.get(i)
@@ -268,7 +399,8 @@ class Table:
                     "hasCards": in_hand and not (st.folded[j]),
                     "lastAction": s.last_action,
                     "net": s.net,
-                    "read": reads.get(i),
+                    "hands": s.hands,
+                    "read": self.reads.get(i),
                     "style": s.style_name if s.kind == "bot" else None,
                     "engineMode": s.policy.mode if isinstance(s.policy, EngineSeat) else None,
                 }
@@ -285,8 +417,10 @@ class Table:
                 "bet": st.bets[st.actor],
                 "pot": st.pot,
             }
+        humans = [i for i, s in enumerate(self.seats) if s.kind == "human" and s.client]
         return {
             "type": "state",
+            "game": self.game_info(),
             "running": self.running,
             "handNo": self.hand_no + (0 if st is None or st.finished else 1),
             "seats": seats,
@@ -298,30 +432,44 @@ class Table:
             "you": me,
             "legal": legal,
             "results": self.results,
-            "log": self.log[-40:],
+            "log": self.log[-60:],
             "bigBlind": BB,
             "styles": [s["name"] for s in self.sampler.styles],
+            "myRead": self.read_detail(me) if me is not None else None,
+            # at the end of a read challenge everyone sees every human's read
+            "finalReads": {str(i): self.read_detail(i) for i in humans} if self.finished else None,
         }
 
-    def _reads(self) -> dict[int, dict]:
-        """PokerBot's live read of every other player (from the first PokerBot seat)."""
-        h = self.hand
-        bot = next((s.policy for s in self.seats if isinstance(s.policy, EngineSeat)), None)
-        if bot is None or h is None or bot.n != len(h.seats):
-            return {}
-        out = {}
-        for j, r in bot.reads().items():
-            seat = h.seats[j]
-            if isinstance(self.seats[seat].policy, EngineSeat):
+    # ------------------------------------------------------------- the record
+
+    def record(self) -> dict:
+        """The whole game, for history: settings, players, results, reads, log."""
+        players = []
+        for i, s in enumerate(self.seats):
+            if s.kind == "empty" or (s.kind == "human" and not s.client and not s.hands):
                 continue
-            top = sorted(r.probs.items(), key=lambda kv: -kv[1])[:3]
-            out[seat] = {
-                "style": r.style,
-                "confidence": r.confidence,
-                "hands": r.hands,
-                "top": [{"style": k, "p": v} for k, v in top],
-            }
-        return out
+            players.append(
+                {
+                    "seat": i,
+                    "name": s.name,
+                    "kind": s.kind,
+                    "trueStyle": s.style_name or None,
+                    "net": s.net,
+                    "hands": s.hands,
+                    "read": self.reads.get(i),
+                    "stats": self.stats(i) if i in self.local else None,
+                    "trajectory": self.trajectory.get(i),
+                }
+            )
+        return {
+            **self.game_info(),
+            "ended": self.ended,
+            "seed": self.seed,
+            "bigBlind": BB,
+            "players": players,
+            "styleInfo": STYLE_INFO,
+            "log": self.log,
+        }
 
 
 def parse_action(msg: dict) -> Action:
@@ -339,11 +487,9 @@ def _describe(e: PlayerAction) -> str:
     if e.type == ActionType.FOLD:
         return "Fold"
     if e.type == ActionType.CHECK_CALL:
-        return (
-            "Check"
-            if e.amount == 0
-            else ("All-in" if e.is_all_in else f"Call {e.amount / BB:g} bb")
-        )
+        if e.amount == 0:
+            return "Check"
+        return "All-in" if e.is_all_in else f"Call {e.amount / BB:g} bb"
     if e.is_all_in:
         return f"All-in {e.to / BB:g} bb"
     return f"{'Bet' if e.to_call == 0 else 'Raise to'} {e.to / BB:g} bb"
@@ -376,7 +522,3 @@ _NAMES = [
     "Yara",
     "Zed",
 ]
-
-
-def style_names() -> list[str]:
-    return list(fr_profiles().names)

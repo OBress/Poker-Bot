@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ClientMessage, TableView } from "./types";
+import type { ClientMessage, ServerView } from "./types";
 
 const PORT = process.env.NEXT_PUBLIC_SERVER_PORT ?? "8000";
 const DEV_PORT = "3000";
@@ -9,7 +9,7 @@ const WS_GRACE_MS = 2500; // a WebSocket that hasn't opened by then is assumed b
 
 /** The game server's base URL. Normally it serves this page too, so it's the page's own
  * origin; under `next dev` on port 3000 it's the game server's port on the same host. */
-function serverBase(): string {
+export function serverBase(): string {
   const { protocol, hostname, host, port } = window.location;
   return port === DEV_PORT ? `${protocol}//${hostname}:${PORT}` : `${protocol}//${host}`;
 }
@@ -38,7 +38,7 @@ export type Transport = "websocket" | "http";
  * proxies or extensions sometimes stall WebSocket handshakes on localhost), it switches to
  * HTTP long polling for the rest of the page's life. */
 export function useTable() {
-  const [view, setView] = useState<TableView | null>(null);
+  const [view, setView] = useState<ServerView | null>(null);
   const [status, setStatus] = useState<Status>("connecting");
   const [transport, setTransport] = useState<Transport>("websocket");
   const [error, setError] = useState<string | null>(null);
@@ -53,7 +53,7 @@ export function useTable() {
     id.current = clientId();
     const base = serverBase();
 
-    const show = (v: TableView) => {
+    const show = (v: ServerView) => {
       if (v.error) setError(v.error);
       setView(v);
     };
@@ -66,7 +66,7 @@ export function useTable() {
         try {
           const r = await fetch(`${base}/api/poll?cid=${encodeURIComponent(id.current)}&since=${since}`, { cache: "no-store" });
           if (!r.ok) throw new Error(String(r.status));
-          const v = (await r.json()) as TableView & { version: number };
+          const v = (await r.json()) as ServerView & { version: number };
           since = v.version;
           setStatus("open");
           show(v);
@@ -94,7 +94,7 @@ export function useTable() {
         setStatus("open");
         socket.send(JSON.stringify({ clientId: id.current }));
       };
-      socket.onmessage = (e) => show(JSON.parse(e.data) as TableView);
+      socket.onmessage = (e) => show(JSON.parse(e.data) as ServerView);
       socket.onclose = () => {
         clearTimeout(grace);
         if (stopped || http.current) return;
