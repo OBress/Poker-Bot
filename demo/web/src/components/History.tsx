@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { fetchGame, fetchHistory, fmtBB, fmtDate } from "@/lib/api";
+import { fetchGame, fetchHistory, fmtAmt, fmtDate } from "@/lib/api";
 import type { GameRecord, HistorySummary } from "@/lib/types";
 import { HistoryRow } from "./Home";
 import ReadReport from "./ReadReport";
@@ -9,7 +9,9 @@ import { Logo, Pill } from "./ui";
 
 const KIND: Record<string, string> = { human: "Person", pokerbot: "PokerBot", bot: "Calibrated bot", tag: "TAG baseline" };
 
-export default function History({ onBack }: { onBack: () => void }) {
+export default function History({ onBack, onResume, currentId }: {
+  onBack: () => void; onResume: (id: string) => void; currentId: string | null;
+}) {
   const [games, setGames] = useState<HistorySummary[] | null>(null);
   const [open, setOpen] = useState<GameRecord | null>(null);
   const [failed, setFailed] = useState(false);
@@ -40,7 +42,8 @@ export default function History({ onBack }: { onBack: () => void }) {
         ) : (
           <div className="mt-6 grid gap-2">
             {games.map((g) => (
-              <HistoryRow key={g.id} g={g} onClick={() => fetchGame(g.id).then(setOpen).catch(() => setFailed(true))} />
+              <HistoryRow key={g.id} g={g} onClick={() => fetchGame(g.id).then(setOpen).catch(() => setFailed(true))}
+                onResume={g.resumable && g.id !== currentId ? () => onResume(g.id) : undefined} />
             ))}
           </div>
         )}
@@ -103,7 +106,7 @@ function GameDetail({ g }: { g: GameRecord }) {
                     )}
                   </td>
                   <td className={`px-4 py-2.5 text-right tabular-nums ${p.net >= 0 ? "text-emerald-300" : "text-red-300"}`}>
-                    {fmtBB(p.net, g.bigBlind, true)}
+                    {fmtAmt(p.net, g.money ?? { sb: 0.5, bb: 1 }, true)}
                   </td>
                 </tr>
               );

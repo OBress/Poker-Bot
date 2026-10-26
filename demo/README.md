@@ -43,8 +43,24 @@ profile if it can't connect.
 
 ## Modes
 
-The home screen starts a new game, continues the one in progress, or opens your past games.
-Starting a new game ends the current one; every game stays in your history.
+The home screen starts a new game, continues or resumes one, or opens your past games.
+Starting a new game saves and closes the current one.
+
+**Customize table** (home screen) sets up the next game, in either mode:
+
+- **Players:** 2–8, with you in seat 1. At 2, PokerBot plays the evolved heads-up exploiter.
+- **Opponents:** Mixed (PokerBots and calibrated bots), All PokerBot (every opponent is the
+  engine), All calibrated bots, or Custom (pick each seat: PokerBot, calibrated bot with a
+  chosen or random style, TAG baseline, or an open seat for a friend).
+- **Blinds and buy-in:** any amounts, e.g. 5/10 with a 1,000 buy-in (10–1,000 big blinds).
+  Everything is shown in those units. The engine itself always plays a 100-chip big blind
+  (the heads-up exploiter assumes it), so only the ratios matter to the bots: stack depth in
+  big blinds and the small blind's share of the big.
+
+**Resuming:** an unfinished game (a cash game, or a read challenge before its last hand) is
+saved after every hand, together with PokerBot's memory. **Save & close** (home screen or ⋯)
+closes it, and **Resume** (home screen or past games) reopens it: you take your seat back, and
+any other people's seats open up for them to rejoin.
 
 - **Cash game:** play as long as you like at the 8-seat table: you in seat 1, two PokerBots
   and five calibrated bots. Change seats between hands under **⋯ → Seats**.
@@ -57,7 +73,8 @@ In either mode, **What does PokerBot think of me?** in the top bar shows the rea
 **Show reads** puts PokerBot's live read over every player's head; it's off by default.
 **⋯ → Reveal bots' true styles** shows what each bot really is, to check the reads against.
 
-Every game is saved to `demo/data/games/` after each hand (git-ignored). **All past games**
+Every game is saved to `demo/data/games/` after each hand (git-ignored): a JSON record, and
+for an unfinished game a `.table.pkl` with its full state to resume it. **All past games**
 lists them; each one shows the reads, every player's result with the read marked right or wrong
 for the bots, and the full hand log.
 
@@ -101,8 +118,8 @@ from one machine, just open more tabs.
 
 ## Notes
 
-- This is a local demo: no accounts, one game at a time per server. A game in progress is lost
-  if the server stops; its hands so far are already in your history.
+- This is a local demo: no accounts, one game at a time per server. If the server stops, the
+  game in progress can be resumed from its last finished hand.
 - The web app is pinned to Next.js 16.4.0. Its advisories (GHSA-2464-fhr4-w9xw,
   GHSA-p3m5-59mp-jv5r, GHSA-673q-mjm6-r5xr) cover image optimization of SVGs, Server Actions
   and `use cache`, none of which the demo uses. Upgrade to 16.4.3 when your npm

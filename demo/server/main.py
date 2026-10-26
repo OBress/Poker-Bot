@@ -6,9 +6,9 @@ With the web app built (``npm run build --prefix demo/web``, or ``npm run demo``
 starts this server) the table is at http://localhost:8000, page and WebSocket on one origin.
 
 There is at most one game at a time. With none, clients see the home screen; ``newGame``
-starts one (a cash game, or a read challenge of 50/100 hands) and replaces any game in
-progress. Every game is saved to ``demo/data/games/`` after each hand (``history.py``) and
-listed at ``/api/history``.
+starts one (a cash game, or a read challenge of 50/100 hands) and ``resume`` reopens a saved
+unfinished one; either closes the game in progress, which stays resumable. Every game is saved
+to ``demo/data/games/`` after each hand (``history.py``) and listed at ``/api/history``.
 
 Clients connect to ``/ws`` (or, when something blocks WebSockets, long-poll ``/api/poll`` and
 post to ``/api/send``) with a per-tab client id, so a reload keeps the seat. Every change is
@@ -112,8 +112,10 @@ class Game:
     # ------------------------------------------------------------- games
 
     def save(self) -> None:
+        """The record for history and, while unfinished, the table itself to resume it."""
         if self.table and self.table.hand_no:
             history.save(self.table.record())
+            history.save_table(self.table)
 
     def stop_loop(self) -> None:
         if self.task:
@@ -123,28 +125,46 @@ class Game:
             self.pending.cancel()
         self.pending, self.table_deadline = None, None
 
-    def new_game(self, cid: str, name: str, mode: str, hands: int | None) -> None:
+    def close_current(self) -> None:
+        """Stop and save the game in progress (it can be resumed later)."""
+        self.stop_loop()
+        if self.table:
+            self.table.running = False
+            self.save()
+
+    def resume(self, cid: str, name: str, game_id: str) -> None:
+        if self.table and self.table.id == game_id:
+            raise ValueError("that game is already open")
+        try:
+            table = history.load_table(game_id)
+        except (OSError, ValueError) as e:
+            raise ValueError("that game can't be resumed") from e
+        self.close_current()
+        table.resume_as(cid, name)
+        self.table = table
+        self.bot_delay = BOT_DELAY[table.mode]
+        self.task = asyncio.create_task(self.run(table))
+
+    def new_game(
+        self, cid: str, name: str, mode: str, hands: int | None, setup: dict | None = None
+    ) -> None:
         if mode not in ("cash", "read"):
             raise ValueError("unknown mode")
         if mode == "read" and hands not in READ_HANDS:
             raise ValueError(f"a read challenge is {' or '.join(map(str, READ_HANDS))} hands")
-        self.stop_loop()
-        if self.table:
-            self.table.ended = self.table.ended or time.time()
-            self.save()
+        seed = self.seed * 1000 + self.games + 1 + int(time.time())
+        table = Table(seed, mode, hands, setup)  # a bad setup fails before anything closes
+        table.sit(cid, name, 0)
+        self.close_current()
         self.games += 1
-        self.table = Table(self.seed * 1000 + self.games + int(time.time()), mode, hands)
-        self.table.sit(cid, name, 0)
+        self.table = table
         self.bot_delay = BOT_DELAY[mode]
         self.table.running = mode == "read"  # a challenge deals at once
         self.task = asyncio.create_task(self.run(self.table))
 
     def end_game(self) -> None:
-        self.stop_loop()
-        if self.table:
-            self.table.running = False
-            self.table.ended = self.table.ended or time.time()
-            self.save()
+        """Close the game for everyone (saved; unfinished games can be resumed)."""
+        self.close_current()
         self.table = None
 
     async def handle(self, cid: str, msg: dict) -> None:
@@ -152,12 +172,16 @@ class Game:
         try:
             if kind == "newGame":
                 hands = msg.get("hands")
+                setup = msg.get("setup")
                 self.new_game(
                     cid,
                     str(msg.get("name", "")),
                     str(msg.get("mode", "cash")),
                     int(hands) if hands else None,
+                    dict(setup) if isinstance(setup, dict) else None,
                 )
+            elif kind == "resume":
+                self.resume(cid, str(msg.get("name", "")), str(msg["id"]))
             elif kind == "endGame":
                 self.end_game()
             elif self.table is None:
@@ -270,6 +294,15 @@ def create_app(seed: int = 0) -> FastAPI:
     app.add_middleware(
         CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
     )
+
+    @app.middleware("http")
+    async def fresh_pages(request: Request, call_next):
+        """Pages must be revalidated, or a browser keeps showing the old app after an update;
+        Next's hashed assets under /_next/ can be cached."""
+        response = await call_next(request)
+        if not request.url.path.startswith("/_next/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
     @app.get("/health")
     async def health() -> dict:

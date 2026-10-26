@@ -39,8 +39,23 @@ from .engine_seat import EngineSeat, fr_profiles
 ROOT = Path(__file__).resolve().parents[2]
 BOTS = ROOT / "profiles/bots-v3.json"
 SEATS = 8
-SB, BB = 50, 100
-BUYIN = 100 * BB
+BB = 100  # the engine's big blind in chips, always (the heads-up exploiter assumes it)
+# The player-facing money: blinds and buy-in are shown in the units the game was set up with
+# (``money``), but the engine always plays a 100-chip big blind; the two are proportional.
+DEFAULT_SETUP = {
+    "players": 8,
+    "seats": [
+        {"kind": k, "style": st}
+        for k, st in zip(
+            ["human", "bot", "pokerbot", "bot", "bot", "pokerbot", "bot", "bot"],
+            [None, 0, None, 4, 1, None, 2, 3],
+            strict=True,
+        )
+    ],
+    "sb": 1.0,
+    "bb": 2.0,
+    "buyin": 200.0,
+}
 KINDS = ("empty", "human", "pokerbot", "bot", "tag")
 MODES = ("cash", "read")
 STREETS = {
@@ -74,7 +89,8 @@ STATS = (
 class Seat:
     kind: str = "empty"
     name: str = ""
-    stack: int = BUYIN
+    stack: int = 100 * BB
+    buyin: int = 100 * BB  # chips this seat starts and rebuys with
     style: int | None = None  # bot: index into the full-ring styles; None = random draw
     client: str | None = None  # human: the client id that holds the seat
     policy: object = None
@@ -82,6 +98,7 @@ class Seat:
     last_action: str = ""
     net: int = 0  # chips won or lost since the table started
     hands: int = 0  # hands dealt to this seat
+    gen: int = 0  # bumped whenever the seat is reconfigured: who sits here, for the reads
 
 
 @dataclass
@@ -91,9 +108,19 @@ class HandInfo:
 
 
 class Table:
-    def __init__(self, seed: int = 0, mode: str = "cash", target: int | None = None) -> None:
+    def __init__(
+        self,
+        seed: int = 0,
+        mode: str = "cash",
+        target: int | None = None,
+        setup: dict | None = None,
+    ) -> None:
         if mode not in MODES:
             raise ValueError(f"unknown mode {mode!r}")
+        self.setup = parse_setup(setup)
+        self.money = {"sb": self.setup["sb"], "bb": self.setup["bb"]}
+        self.sb = max(1, round(BB * self.setup["sb"] / self.setup["bb"]))  # engine chips
+        self.buyin = round(BB * self.setup["buyin"] / self.setup["bb"])
         self.rng = np.random.default_rng(seed)
         self.seed = seed
         self.mode = mode
@@ -119,18 +146,18 @@ class Table:
     # ------------------------------------------------------------- setup
 
     def default_setup(self) -> None:
-        """Seat 1 for you, two PokerBots, five calibrated bots of different styles."""
-        layout = ["human", "bot", "pokerbot", "bot", "bot", "pokerbot", "bot", "bot"]
-        styles = [None, 0, None, 4, 1, None, 2, 3]
-        for i, (kind, style) in enumerate(zip(layout, styles, strict=True)):
-            self.configure(i, kind, style)
+        """The seats from the game's setup (default: seat 1 for you, two PokerBots, five
+        calibrated bots of different styles)."""
+        for i, seat in enumerate(self.setup["seats"]):
+            self.configure(i, seat["kind"], seat["style"])
 
     def configure(self, i: int, kind: str, style: int | None = None) -> None:
         if kind not in KINDS:
             raise ValueError(f"unknown seat kind {kind!r}")
         s = self.seats[i]
         keep_client = s.client if kind == "human" else None
-        self.seats[i] = s = Seat(kind=kind, style=style, client=keep_client)
+        self.seats[i] = s = Seat(kind=kind, style=style, client=keep_client, gen=s.gen + 1,
+                                 stack=self.buyin, buyin=self.buyin)  # fmt: skip
         if kind == "pokerbot":
             n = sum(1 for x in self.seats if x.kind == "pokerbot")
             s.name = "PokerBot" if n == 1 else f"PokerBot {n}"
@@ -140,7 +167,8 @@ class Table:
             s.policy, s.style_name = draw.bot, self.sampler.styles[draw.style]["name"]
             used = {x.name for x in self.seats}
             s.name = str(self.rng.choice([n for n in _NAMES if n not in used]))
-            s.stack = int(round(min(draw.bot.buyin_bb, 200) * BB))
+            # its calibrated buy-in (a short-stacker buys in short), at most the table's
+            s.stack = s.buyin = min(int(round(draw.bot.buyin_bb * BB)), self.buyin)
         elif kind == "tag":
             s.policy, s.name = abc_tag(int(self.rng.integers(2**31))), "TAG baseline"
         elif kind == "human":
@@ -156,6 +184,22 @@ class Table:
         if s.kind == "empty":
             self.configure(i, "human")
         s.client, s.name = client, name[:16] or "Player"
+
+    def resume_as(self, client: str, name: str) -> int:
+        """A saved game is being resumed by ``client``: everyone's old connection is gone. Seat
+        them where a human named ``name`` sat (else the first human seat); others are open."""
+        humans = [i for i, s in enumerate(self.seats) if s.kind == "human"]
+        if not humans:
+            raise ValueError("this game has no seat for a person")
+        mine = next((i for i in humans if self.seats[i].name == name), humans[0])
+        for i in humans:
+            self.seats[i].client = None
+            if i != mine:
+                self.seats[i].name = "Open seat"
+        self.seats[mine].client, self.seats[mine].name = client, name[:16] or "Player"
+        self.running = False
+        self._note(f"{self.seats[mine].name} resumed the game")
+        return mine
 
     def leave(self, client: str) -> int | None:
         """Stand up; returns the seat that was left (its live hand is folded by the caller)."""
@@ -190,11 +234,11 @@ class Table:
             return False
         for i in seats:  # rebuy
             if self.seats[i].stack < BB:
-                self.seats[i].stack = BUYIN
-                self._note(f"{self.seats[i].name} rebuys for {BUYIN // BB} bb")
-        comp = tuple(
-            (i, self.seats[i].kind, self.seats[i].client, id(self.seats[i].policy)) for i in seats
-        )
+                self.seats[i].stack = self.seats[i].buyin
+                self._note(f"{self.seats[i].name} rebuys for {self.amount(self.seats[i].buyin)}")
+        # who sits where; the classifiers' memory is keyed by seat, so a change resets it. Stable
+        # across saving and resuming the game (a resumed player gets a new client id).
+        comp = tuple((i, self.seats[i].kind, self.seats[i].gen) for i in seats)
         if comp != self.composition:
             self.composition = comp
             for i in seats:
@@ -209,7 +253,7 @@ class Table:
             [self.seats[i].stack for i in seats],
             seats.index(self.button),
             shuffled_deck(int(self.rng.integers(2**63))),
-            SB,
+            self.sb,
             BB,
             self.hand_no,
         )
@@ -235,8 +279,8 @@ class Table:
         board_before = len(st.board)
         st.apply(action)
         ev = next(e for e in reversed(st.events) if isinstance(e, PlayerAction))
-        self.seats[seat].last_action = _describe(ev)
-        self._note(f"{self.seats[seat].name}: {_describe(ev)}")
+        self.seats[seat].last_action = self.describe(ev)
+        self._note(f"{self.seats[seat].name}: {self.describe(ev)}")
         if len(st.board) > board_before and not st.finished:
             for s in self.seats:
                 s.last_action = "" if s.last_action != "Fold" else s.last_action
@@ -266,7 +310,7 @@ class Table:
             if pay > 0:
                 winners.append({"seat": seat, "amount": pay + st.contrib[j]})
                 self._note(
-                    f"{self.seats[seat].name} wins {(pay + st.contrib[j]) / BB:g} bb"
+                    f"{self.seats[seat].name} wins {self.amount(pay + st.contrib[j])}"
                     + (f" with {' '.join(shown[seat])}" if seat in shown else "")
                 )
         for j, seat in enumerate(h.seats):
@@ -296,6 +340,21 @@ class Table:
             self.apply(Action.fold())
             return True
         return False
+
+    def amount(self, chips: int) -> str:
+        """Engine chips in the game's money units, e.g. 250 chips at blinds 1/2 -> "5"."""
+        return fmt_money(chips * self.money["bb"] / BB)
+
+    def describe(self, e: PlayerAction) -> str:
+        if e.type == ActionType.FOLD:
+            return "Fold"
+        if e.type == ActionType.CHECK_CALL:
+            if e.amount == 0:
+                return "Check"
+            return "All-in" if e.is_all_in else f"Call {self.amount(e.amount)}"
+        if e.is_all_in:
+            return f"All-in {self.amount(e.to)}"
+        return f"{'Bet' if e.to_call == 0 else 'Raise to'} {self.amount(e.to)}"
 
     def _note(self, text: str) -> None:
         self.log.append(text)
@@ -434,6 +493,7 @@ class Table:
             "results": self.results,
             "log": self.log[-60:],
             "bigBlind": BB,
+            "money": self.money,
             "styles": [s["name"] for s in self.sampler.styles],
             "myRead": self.read_detail(me) if me is not None else None,
             # at the end of a read challenge everyone sees every human's read
@@ -466,10 +526,42 @@ class Table:
             "ended": self.ended,
             "seed": self.seed,
             "bigBlind": BB,
+            "money": self.money,
+            "setup": self.setup,
             "players": players,
             "styleInfo": STYLE_INFO,
             "log": self.log,
         }
+
+
+def fmt_money(v: float) -> str:
+    return f"{v:,.2f}".rstrip("0").rstrip(".")
+
+
+def parse_setup(setup: dict | None) -> dict:
+    """A validated table setup: 2-8 players, seat 1 a person, each other seat one of
+    ``KINDS`` (a calibrated bot may name its style), blinds and buy-in in any money units."""
+    if not setup:
+        return {**DEFAULT_SETUP, "seats": [dict(x) for x in DEFAULT_SETUP["seats"]]}
+    players = int(setup.get("players", 8))
+    if not 2 <= players <= SEATS:
+        raise ValueError(f"a table has 2 to {SEATS} players")
+    given = list(setup.get("seats") or [])
+    seats = []
+    for i in range(SEATS):
+        x = given[i] if i < len(given) and given[i] else {}
+        kind = "human" if i == 0 else str(x.get("kind", "pokerbot")) if i < players else "empty"
+        if kind not in KINDS:
+            raise ValueError(f"unknown seat kind {kind!r}")
+        style = x.get("style")
+        style = int(style) if kind == "bot" and style not in (None, "") else None
+        seats.append({"kind": kind, "style": style})
+    sb, bb, buyin = (float(setup.get(k, DEFAULT_SETUP[k])) for k in ("sb", "bb", "buyin"))
+    if not (0 < sb <= bb and bb < 1e7):
+        raise ValueError("blinds must be positive, with the small blind at most the big blind")
+    if not 10 <= buyin / bb <= 1000:
+        raise ValueError("the buy-in must be 10 to 1000 big blinds")
+    return {"players": players, "seats": seats, "sb": sb, "bb": bb, "buyin": buyin}
 
 
 def parse_action(msg: dict) -> Action:
@@ -481,18 +573,6 @@ def parse_action(msg: dict) -> Action:
     if kind == "raise":
         return Action.raise_to(int(msg.get("amount", 0)))
     raise ValueError(f"unknown action {kind!r}")
-
-
-def _describe(e: PlayerAction) -> str:
-    if e.type == ActionType.FOLD:
-        return "Fold"
-    if e.type == ActionType.CHECK_CALL:
-        if e.amount == 0:
-            return "Check"
-        return "All-in" if e.is_all_in else f"Call {e.amount / BB:g} bb"
-    if e.is_all_in:
-        return f"All-in {e.to / BB:g} bb"
-    return f"{'Bet' if e.to_call == 0 else 'Raise to'} {e.to / BB:g} bb"
 
 
 _NAMES = [
