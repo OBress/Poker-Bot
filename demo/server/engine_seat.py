@@ -94,15 +94,38 @@ class EngineSeat:
     buyin_bb = 100.0
 
     def __init__(self, seed: int) -> None:
+        self.seed = seed
         self.rng = np.random.default_rng(seed)
         self.mode = "multiway"
         self.reset(n_players=0)
+
+    # Saving a game (``Table`` is pickled to resume it later): the classifiers and the exploiter
+    # are sandbox-loaded programs, which don't pickle, so the state is the hands seen since the
+    # last reset and the RNG; loading rebuilds the programs and replays those hands.
+
+    def __getstate__(self) -> dict:
+        return {
+            "seed": self.seed,
+            "n": self.n,
+            "history": self.history,
+            "mode": self.mode,
+            "rng": self.rng.bit_generator.state,
+        }
+
+    def __setstate__(self, state: dict) -> None:
+        self.__init__(state["seed"])
+        self.reset(state["n"])
+        for events, me in state["history"]:
+            self.observe_hand(events, me)
+        self.rng.bit_generator.state = state["rng"]
+        self.mode = state["mode"]
 
     # ------------------------------------------------------------- memory
 
     def reset(self, n_players: int) -> None:
         """New table composition: forget everyone (classifier memory is keyed by seat)."""
         self.n = n_players
+        self.history: list[tuple[list[Event], int]] = []  # hands seen since this reset
         clf, params = _classifier_program()
         self.clf = clf(fr_profiles(), dict(params))
         self.tracker = FeatureTracker()
@@ -113,6 +136,7 @@ class EngineSeat:
 
     def observe_hand(self, events: list[Event], me: int) -> None:
         """A finished hand, with hand-local seats (``me`` is this seat)."""
+        self.history.append((list(events), me))
         public = redact(events)
         for e in public:
             self.clf.observe(e)

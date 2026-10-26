@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from demo.server.engine_seat import EngineSeat, tilted_params
-from demo.server.table import BUYIN, Table
+from demo.server.table import Table
 from pokerbot.baselines.heuristic import ABC_TAG
 from pokerbot.engine.actions import Action
 
@@ -71,7 +71,7 @@ def test_seat_rules() -> None:
     assert t.seat_of("a") is None and t.seats[0].kind == "human"
     t.configure(3, "empty")
     t.sit("b", "B", 3)
-    assert t.seats[3].kind == "human" and t.seats[3].stack == BUYIN
+    assert t.seats[3].kind == "human" and t.seats[3].stack == t.buyin
 
 
 def test_read_challenge_ends_after_its_hands_with_a_read_and_a_record(tmp_path) -> None:
@@ -125,3 +125,44 @@ def test_standing_up_on_your_turn_does_not_stall_the_game(tmp_path, monkeypatch)
         return g.table.hand_no - hand
 
     assert asyncio.run(scenario()) >= 1
+
+
+def test_custom_setup_all_pokerbots_blinds_and_buyin() -> None:
+    from demo.server.table import parse_setup
+
+    setup = {"players": 5, "seats": [{}, *[{"kind": "pokerbot"}] * 4], "sb": 5, "bb": 10,
+             "buyin": 400}  # fmt: skip
+    t = Table(8, setup=setup)
+    t.sit("me", "Owen", 0)
+    assert [s.kind for s in t.seats] == ["human"] + ["pokerbot"] * 4 + ["empty"] * 3
+    assert t.sb == 50 and t.buyin == 4000  # engine chips: big blind 100, 40 big blinds
+    assert t.view("me")["money"] == {"sb": 5.0, "bb": 10.0} and t.amount(250) == "25"
+    _play(t, 5)
+    assert sum(s.net for s in t.seats) == 0
+    for bad in (
+        {"players": 1},
+        {"sb": 3, "bb": 2},
+        {"bb": 2, "buyin": 10},
+        {"seats": [{}, {"kind": "x"}]},
+    ):
+        with pytest.raises(ValueError):
+            parse_setup(bad)
+
+
+def test_a_saved_game_resumes_with_its_reads(tmp_path) -> None:
+    from demo.server import history
+
+    t = Table(9)
+    t.sit("old-tab", "Owen", 0)
+    _play(t, 8)
+    before = t.view("old-tab")["myRead"]
+    history.save_table(t, tmp_path)
+    assert history.resumable(t.id, tmp_path)
+    r = history.load_table(t.id, tmp_path)
+    assert r.resume_as("new-tab", "Owen") == 0 and r.seat_of("new-tab") == 0
+    assert r.view("new-tab")["myRead"]["probs"] == pytest.approx(before["probs"])
+    _play(r, 2)  # same seats, so the reader keeps its memory instead of resetting
+    assert r.hand_no == 10 and r.view("new-tab")["myRead"]["hands"] == 10
+    r.target, r.mode = 10, "read"  # once finished, the saved state goes away
+    history.save_table(r, tmp_path)
+    assert not history.resumable(t.id, tmp_path)
