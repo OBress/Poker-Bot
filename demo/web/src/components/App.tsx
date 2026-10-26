@@ -42,7 +42,8 @@ export default function App() {
       {!atTable && (
         <div className="fixed inset-0 z-40 overflow-y-auto bg-[#120d18]">
           {screen === "history" ? (
-            <History onBack={() => setScreen("home")} />
+            <History onBack={() => setScreen("home")} currentId={view.game?.id ?? null}
+              onResume={(id) => { send({ type: "resume", id, name: name.trim() || "Player" }); setScreen("table"); }} />
           ) : (
             <Home view={view} send={send} name={name} setName={setName} onPlay={() => setScreen("table")}
               onHistory={() => setScreen("history")} />

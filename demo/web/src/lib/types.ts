@@ -3,6 +3,21 @@
 export type SeatKind = "empty" | "human" | "pokerbot" | "bot" | "tag";
 export type Mode = "cash" | "read";
 
+/** Blinds in the units the game was set up with; the engine itself always plays a 100-chip big blind. */
+export interface Money {
+  sb: number;
+  bb: number;
+}
+
+/** A table chosen on the home screen (demo/server/table.py parse_setup). */
+export interface Setup {
+  players: number; // 2-8; seat 1 is you
+  seats: { kind: SeatKind; style: number | null }[];
+  sb: number;
+  bb: number;
+  buyin: number;
+}
+
 export interface Read {
   style: string;
   confidence: number;
@@ -98,6 +113,7 @@ export interface TableView extends Common {
   results: Results | null;
   log: string[];
   bigBlind: number;
+  money: Money;
   styles: string[];
   myRead: ReadDetail | null;
   finalReads: Record<string, ReadDetail> | null;
@@ -112,6 +128,8 @@ export interface HistorySummary {
   started: number;
   ended: number | null;
   bigBlind: number;
+  money: Money;
+  resumable: boolean;
   humans: { name: string; net: number; read: string | null; confidence: number | null }[];
   pokerbots: { name: string; net: number }[];
 }
@@ -119,6 +137,8 @@ export interface HistorySummary {
 export interface GameRecord extends GameInfo {
   ended: number | null;
   bigBlind: number;
+  money?: Money;
+  setup?: Setup;
   players: {
     seat: number;
     name: string;
@@ -135,7 +155,8 @@ export interface GameRecord extends GameInfo {
 }
 
 export type ClientMessage =
-  | { type: "newGame"; mode: Mode; hands?: number; name: string }
+  | { type: "newGame"; mode: Mode; hands?: number; name: string; setup?: Setup }
+  | { type: "resume"; id: string; name: string }
   | { type: "endGame" }
   | { type: "sit"; seat: number; name: string }
   | { type: "leave" }
