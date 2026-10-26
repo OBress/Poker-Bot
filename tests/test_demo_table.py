@@ -125,3 +125,45 @@ def test_standing_up_on_your_turn_does_not_stall_the_game(tmp_path, monkeypatch)
         return g.table.hand_no - hand
 
     assert asyncio.run(scenario()) >= 1
+
+
+def test_fit_separates_typical_players_from_ones_unlike_any_style() -> None:
+    from demo.server.engine_seat import fr_profiles
+    from demo.server.fit import style_fit
+
+    prof = fr_profiles()
+    assert style_fit(prof, {}, "TAG") is None  # nothing seen yet
+    # a player sitting exactly on a style's pooled rates, over many hands, fits it well
+    k = prof.names.index("TAG")
+    typical = {f: (2000, round(2000 * prof.pooled_rate[k, j])) for j, f in enumerate(prof.features)}
+    fit = style_fit(prof, typical, "TAG")
+    assert fit["level"] == "well" and fit["p"] > 0.05 and not fit["extremes"]
+    # ...and are far from a limping style, mostly because they hardly ever limp
+    off = style_fit(prof, typical, "Passive limper")
+    assert off["level"] == "none" and off["distance"] > fit["distance"]
+    assert off["extremes"][0]["key"] == "limp" and off["extremes"][0]["you"] == "limp far less"
+
+
+def test_reads_flag_a_calling_station_and_a_maniac_but_not_the_style_bots() -> None:
+    def raiser(t: Table) -> Action:
+        return Action.raise_to(0) if t.hand.state.legal().can_raise else Action.check_call()
+
+    t = Table(0)
+    t.sit("me", "Owen", 0)
+    _play(t, 120)  # calls everything
+    me = t.read_detail(0)
+    assert me["style"] == "Passive limper" and me["fit"]["level"] == "none"
+    keys = {e["key"] for e in me["fit"]["extremes"]}
+    assert keys & {"vpip", "limp", "wtsd"} and me["fit"]["alias"] is None
+    vpip = next(e for e in me["fit"]["extremes"] if e["key"] == "vpip")
+    assert vpip["z"] > 0 and vpip["you"] == "play far more hands"
+    assert vpip["they"] == "plays far more hands"
+    bots = [r["fit"]["level"] for s, r in t.reads.items() if t.seats[s].kind == "bot"]
+    assert bots.count("well") >= len(bots) - 1  # calibrated bots look like real players
+
+    t = Table(1)
+    t.sit("me", "Owen", 0)
+    _play(t, 80, raiser)
+    fit = t.view("me")["seats"][0]["read"]["fit"]
+    assert fit["level"] == "none" and fit["alias"] == "Loose-aggressive / Maniac"
+    assert fit["extremes"][0]["key"] in {"vpip", "pfr", "3bet"}
