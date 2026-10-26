@@ -8,6 +8,18 @@ export interface Read {
   confidence: number;
   hands: number;
   probs: Record<string, number>; // every style, most likely first
+  fit?: Fit | null; // how typical the player is of that style (null before any stat is seen)
+}
+
+// demo/server/fit.py: distance from the read style under its Gaussian profile
+export interface Fit {
+  level: "well" | "loose" | "none";
+  label: string; // "fits well" / "fits loosely" / "plays unlike any style"
+  distance: number; // Mahalanobis distance from the style's center
+  p: number; // share of real players of the style at least this far out
+  stats: number; // stats seen so far
+  extremes: { key: string; z: number; you: string; they: string }[]; // most unusual stats first
+  alias: string | null; // demo-only label for players beyond every style
 }
 
 export interface Stat {

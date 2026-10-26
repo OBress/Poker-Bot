@@ -1,6 +1,6 @@
 "use client";
 
-import type { Read, Stat } from "@/lib/types";
+import type { Fit, Read, Stat } from "@/lib/types";
 
 const COLORS: Record<string, string> = {
   "Loose-passive": "#f59e0b",
@@ -49,6 +49,7 @@ export default function ReadReport({
           </span>
         </div>
         {about && <p className="mt-2 text-sm text-white/70">{about}</p>}
+        {read.fit && <FitNote fit={read.fit} style={read.style} name={name} />}
         {read.hands < 50 && (
           <p className="mt-2 text-xs text-amber-200/80">
             Early read: it usually firms up after about 50 hands.
@@ -76,6 +77,56 @@ export default function ReadReport({
 
       {trajectory && trajectory.length > 1 && <Trajectory points={trajectory} styles={styles} />}
       {stats && stats.length > 0 && <Stats stats={stats} top={read.style} styles={styles} />}
+    </div>
+  );
+}
+
+const FIT_COLORS: Record<Fit["level"], string> = {
+  well: "bg-emerald-400/15 text-emerald-200",
+  loose: "bg-amber-400/15 text-amber-200",
+  none: "bg-rose-400/15 text-rose-200",
+};
+
+function joinWords(parts: string[]): string {
+  return parts.length < 2 ? (parts[0] ?? "") : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+}
+
+/** How typical the player is of the style they were read as: the classifier always names the
+ * nearest style, even for someone unlike every style it knows. */
+function FitNote({ fit, style, name }: { fit: Fit; style: string; name?: string }) {
+  const who = name ?? "you";
+  const ways = joinWords(fit.extremes.map((e) => (name ? e.they : e.you)));
+  let text: string;
+  if (fit.level === "well") {
+    text = `${name ? `${name}'s` : "Your"} numbers are typical of a real ${style}.`;
+  } else if (!ways) {
+    text = `Closest style: ${style}, but ${who} ${name ? "is" : "are"} an unusual one.`;
+  } else if (fit.level === "loose") {
+    text = `Closest style: ${style}, but ${who} ${ways} than most players of this type.`;
+  } else {
+    text = `Closest style: ${style}, but ${who} ${ways} than any real player of this type.`;
+  }
+  return (
+    <div className="mt-3 space-y-1.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <span
+          className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${FIT_COLORS[fit.level]}`}
+          title={`Distance ${fit.distance.toFixed(1)} over ${fit.stats} stats; ${(fit.p * 100).toPrecision(2)}% of real players of this style sit at least this far out`}
+        >
+          {fit.label}
+        </span>
+        {fit.alias && (
+          <span className="rounded-full bg-rose-500/20 px-2.5 py-0.5 text-xs font-medium text-rose-100">
+            Demo label: {fit.alias}
+          </span>
+        )}
+      </div>
+      <p className="text-sm text-white/70">{text}</p>
+      {fit.alias && (
+        <p className="text-xs text-white/50">
+          Plays more hands and raises more before the flop than every style PokerBot learned from real players.
+        </p>
+      )}
     </div>
   );
 }
