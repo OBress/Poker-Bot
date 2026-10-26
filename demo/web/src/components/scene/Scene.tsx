@@ -4,7 +4,8 @@ import { ContactShadows, Html, OrbitControls } from "@react-three/drei";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as THREE from "three";
-import type { SeatView, TableView } from "@/lib/types";
+import { fmtAmt } from "@/lib/api";
+import type { Money, SeatView, TableView } from "@/lib/types";
 import { backTexture, CARD_H, CARD_W, faceTexture } from "./cardTextures";
 
 // Table geometry (world units): an elliptical felt of radii RX x RZ at y = 0.
@@ -70,7 +71,7 @@ const DENOMS = [
   { v: 25, color: "#2563eb" },
 ];
 
-function Chips({ amount, label, bb }: { amount: number; label?: boolean; bb: number }) {
+function Chips({ amount, label, money }: { amount: number; label?: boolean; money: Money }) {
   const stacks = useMemo(() => {
     let left = amount;
     const out: { color: string; n: number }[] = [];
@@ -103,7 +104,7 @@ function Chips({ amount, label, bb }: { amount: number; label?: boolean; bb: num
         <Html position={[0, 0.35, 0]} center zIndexRange={[10, 0]} className="pointer-events-none select-none">
           {amount > 0 && (
             <div className="rounded-full bg-black/70 px-2 py-0.5 text-xs font-semibold whitespace-nowrap text-amber-200">
-              {fmtBB(amount, bb)}
+              {fmtAmt(amount, money)}
             </div>
           )}
         </Html>
@@ -112,10 +113,6 @@ function Chips({ amount, label, bb }: { amount: number; label?: boolean; bb: num
   );
 }
 
-export function fmtBB(chips: number, bb: number) {
-  const v = chips / bb;
-  return `${Number.isInteger(v) ? v : v.toFixed(1)} bb`;
-}
 
 function feltTexture() {
   const c = document.createElement("canvas");
@@ -233,7 +230,7 @@ function Avatar({ seat, active, winner }: { seat: SeatView; active: boolean; win
 }
 
 function Nameplate({ seat, view, reveal, showReads, active }: { seat: SeatView; view: TableView; reveal: boolean; showReads: boolean; active: boolean }) {
-  const bb = view.bigBlind;
+  const money = view.money;
   const won = view.results?.winners.find((w) => w.seat === seat.index);
   return (
     <div className={`w-44 rounded-xl border px-2.5 py-1.5 text-center shadow-lg backdrop-blur-sm select-none ${active ? "border-sky-400 bg-sky-950/80" : "border-white/10 bg-black/65"} ${seat.folded ? "opacity-60" : ""}`}>
@@ -242,9 +239,9 @@ function Nameplate({ seat, view, reveal, showReads, active }: { seat: SeatView; 
         {seat.you && <span className="rounded bg-orange-500/30 px-1 text-[10px] text-orange-200">YOU</span>}
         <span className="truncate">{seat.name}</span>
       </div>
-      <div className="text-xs text-amber-200">{fmtBB(seat.stack, bb)}</div>
+      <div className="text-xs text-amber-200">{fmtAmt(seat.stack, money)}</div>
       {won ? (
-        <div className="mt-0.5 text-xs font-bold text-yellow-300">wins {fmtBB(won.amount, bb)}</div>
+        <div className="mt-0.5 text-xs font-bold text-yellow-300">wins {fmtAmt(won.amount, money)}</div>
       ) : seat.lastAction ? (
         <div className="mt-0.5 text-xs text-sky-200">{seat.lastAction}</div>
       ) : null}
@@ -310,7 +307,7 @@ function SeatGroup({ seat, slot, view, reveal, showReads }: { seat: SeatView; sl
         );
       })}
       <group position={betPos}>
-        <Chips amount={seat.bet} bb={view.bigBlind} label />
+        <Chips amount={seat.bet} money={view.money} label />
       </group>
       {view.button === seat.index && (
         <Smooth to={[betPos[0] + Math.cos(face) * 0.45, 0.02, betPos[2] - Math.sin(face) * 0.45]}>
@@ -373,12 +370,12 @@ function Board({ view }: { view: TableView }) {
         </Smooth>
       ))}
       <group position={[0, 0, 0.55]}>
-        <Chips amount={view.pot - view.seats.reduce((s, x) => s + x.bet, 0)} bb={view.bigBlind} />
+        <Chips amount={view.pot - view.seats.reduce((s, x) => s + x.bet, 0)} money={view.money} />
       </group>
       <Html position={[0, 0.05, -1.05]} center zIndexRange={[10, 0]} className="pointer-events-none select-none">
         {view.pot > 0 && (
           <div className="rounded-full bg-black/70 px-3 py-1 text-sm font-bold whitespace-nowrap text-amber-200">
-            Pot {fmtBB(view.pot, view.bigBlind)}
+            Pot {fmtAmt(view.pot, view.money)}
           </div>
         )}
       </Html>

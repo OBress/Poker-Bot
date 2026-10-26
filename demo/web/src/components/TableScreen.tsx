@@ -2,8 +2,8 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
-import { fmtBB } from "@/lib/api";
-import type { ClientMessage, Legal, ReadDetail, SeatKind, TableView } from "@/lib/types";
+import { fmtAmt, fmtBlinds } from "@/lib/api";
+import type { ClientMessage, Legal, Money, ReadDetail, SeatKind, TableView } from "@/lib/types";
 import ReadReport from "./ReadReport";
 import { Logo, Modal, Pill } from "./ui";
 
@@ -56,6 +56,7 @@ export default function TableScreen({ view, send, name, transport, status, error
         <Logo small />
         <Pill tone={game.mode === "read" ? "teal" : "neutral"}>{game.mode === "read" ? "Read me" : "Cash game"}</Pill>
         <HandCounter view={view} />
+        <span className="text-sm text-white/45">blinds {fmtBlinds(view.money)}</span>
         {transport === "http" && <span className="text-xs text-white/40" title="WebSocket blocked in this browser; using HTTP">via HTTP</span>}
         {status !== "open" && <span className="text-xs text-red-300">reconnecting…</span>}
 
@@ -85,8 +86,8 @@ export default function TableScreen({ view, send, name, transport, status, error
             {me ? (
               <MenuItem onClick={() => { send({ type: "leave" }); setPanel(null); }}>Stand up (watch)</MenuItem>
             ) : null}
-            <MenuItem onClick={() => { send({ type: "endGame" }); onHome(); }} danger>
-              End game
+            <MenuItem onClick={() => { send({ type: "endGame" }); onHome(); }}>
+              Save &amp; close (resume later)
             </MenuItem>
           </div>
         )}
@@ -96,14 +97,14 @@ export default function TableScreen({ view, send, name, transport, status, error
       {me && (
         <div className="absolute bottom-4 left-4 z-30 rounded-xl border border-white/10 bg-black/60 px-3.5 py-2 text-sm backdrop-blur">
           <div className="font-semibold">{me.name}</div>
-          <div className="text-amber-200">{fmtBB(me.stack, view.bigBlind)}</div>
-          <div className={`text-xs ${me.net >= 0 ? "text-emerald-300" : "text-red-300"}`}>{fmtBB(me.net, view.bigBlind, true)} this game</div>
+          <div className="text-amber-200">{fmtAmt(me.stack, view.money)}</div>
+          <div className={`text-xs ${me.net >= 0 ? "text-emerald-300" : "text-red-300"}`}>{fmtAmt(me.net, view.money, true)} this game</div>
         </div>
       )}
 
       {view.you === null && !game.finished && <JoinPanel view={view} send={send} name={name} />}
       {active && view.legal && (
-        <ActionBar legal={view.legal} bb={view.bigBlind} send={send}
+        <ActionBar legal={view.legal} money={view.money} send={send}
           key={`${view.handNo}-${view.street}-${view.legal.toCall}-${view.legal.minRaiseTo}`} />
       )}
       {me && !view.legal && <StatusLine view={view} send={send} />}
@@ -214,7 +215,8 @@ function JoinPanel({ view, send, name }: { view: TableView; send: Send; name: st
   );
 }
 
-function ActionBar({ legal, bb, send }: { legal: Legal; bb: number; send: Send }) {
+function ActionBar({ legal, money, send }: { legal: Legal; money: Money; send: Send }) {
+  const bb = 100; // engine chips per big blind
   const { toCall, canRaise, minRaiseTo, maxRaiseTo, bet, pot } = legal;
   const [amount, setAmount] = useState(minRaiseTo);
   const presets = useMemo(() => {
@@ -246,8 +248,8 @@ function ActionBar({ legal, bb, send }: { legal: Legal; bb: number; send: Send }
       <div className="mb-2.5 flex items-center justify-between text-xs text-white/60">
         <span className="font-semibold text-sky-200">Your turn</span>
         <span>
-          pot {fmtBB(pot, bb)}
-          {toCall > 0 && <> · {fmtBB(toCall, bb)} to call</>}
+          pot {fmtAmt(pot, money)}
+          {toCall > 0 && <> · {fmtAmt(toCall, money)} to call</>}
         </span>
       </div>
       <div className="grid grid-cols-3 gap-2">
@@ -255,10 +257,10 @@ function ActionBar({ legal, bb, send }: { legal: Legal; bb: number; send: Send }
           Fold <kbd className="text-xs opacity-60">F</kbd>
         </button>
         <button className="btn bg-sky-700 py-3 text-base hover:bg-sky-600" onClick={() => send({ type: "action", action: toCall ? "call" : "check" })}>
-          {toCall ? `Call ${fmtBB(toCall, bb)}` : "Check"} <kbd className="text-xs opacity-60">C</kbd>
+          {toCall ? `Call ${fmtAmt(toCall, money)}` : "Check"} <kbd className="text-xs opacity-60">C</kbd>
         </button>
         <button className="btn bg-amber-600 py-3 text-base hover:bg-amber-500" disabled={!canRaise} onClick={() => send({ type: "action", action: "raise", amount })}>
-          {amount >= maxRaiseTo ? "All-in" : isBet ? "Bet" : "Raise to"} {fmtBB(amount, bb)} <kbd className="text-xs opacity-60">R</kbd>
+          {amount >= maxRaiseTo ? "All-in" : isBet ? "Bet" : "Raise to"} {fmtAmt(amount, money)} <kbd className="text-xs opacity-60">R</kbd>
         </button>
       </div>
       {canRaise && (
