@@ -794,6 +794,23 @@ def cmd_eval_duplicate(args: argparse.Namespace) -> None:
                   f"reference {s['ref_errors']}")  # fmt: skip
 
 
+def cmd_eval_slumbot(args: argparse.Namespace) -> None:
+    from pokerbot.eval.slumbot import run_slumbot
+
+    s = run_slumbot(args.hero, args.hands, args.seed, args.every)
+    print(f"run: {s['run_id']}   hero {s['hero']}   {s['hands']:,} hands vs Slumbot (200 bb)")
+    for key in ("adjusted", "raw"):
+        e = s[key]
+        print(f"  {key:9s} {e['bb100']:+8.2f} +/- {e['ci']:.2f} bb/100")
+    for pos, v in s["by_position"].items():
+        print(f"  as {pos}: {v['bb100']:+8.1f} bb/100 over {v['hands']:,} hands")
+    if s["fallback"]:
+        m, n = s["fallback"]
+        print(f"  blueprint fell back to its heuristic in {m}/{n} decisions ({m / n:.1%})")
+    if s["mismatched"] or s["rejected"]:
+        print(f"  replay mismatches: {s['mismatched']}, refused raises: {s['rejected']}")
+
+
 def _tables() -> None:
     import polars as pl
 
@@ -1172,6 +1189,12 @@ def main(argv: list[str] | None = None) -> None:
     dup.add_argument("--workers", type=int, default=None)
     dup.add_argument("--seed", type=int, default=None)
     dup.set_defaults(func=cmd_eval_duplicate)
+    sb = ev.add_parser("slumbot", help="play Slumbot over its public API (200 bb heads-up)")
+    sb.add_argument("--hero", default="blueprint:profiles/blueprint-hu-v1.npz")
+    sb.add_argument("--hands", type=int, default=10_000)
+    sb.add_argument("--seed", type=int, default=0)
+    sb.add_argument("--every", type=int, default=500, help="log progress every N hands")
+    sb.set_defaults(func=cmd_eval_slumbot)
 
     runs = sub.add_parser("runs", help="tracked experiment runs").add_subparsers(required=True)
     runs.add_parser("list", help="all runs").set_defaults(func=cmd_runs_list)
