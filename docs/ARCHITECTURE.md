@@ -290,7 +290,9 @@ re-runs are cheap and deterministic), token/cost logging, and code extraction fr
   Showdown rules: 400 hands, stacks carry over, no rebuys). Player specs in `eval/players.py`.
 - External opponents: `opponents/fullhouse/` runs any e-x.club-style `bot.py` (`decide(game_state)`)
   inside our engine, plus the five reference bots frozen at a commit. Config:
-  `configs/bench-fullhouse.yaml`; run with `uv run pokerbot eval duplicate`. Their bots are
+  `configs/bench-fullhouse.yaml` (6-max) and `configs/bench-fullhouse-hu.yaml` (the heads-up
+  exploiter vs the blueprint, `eval/exploiter_player.py`; results in
+  `docs/results/fullhouse-hu.md`); run with `uv run pokerbot eval duplicate`. Their bots are
   nothing like the 2009 human styles, so this is an out-of-distribution check, not a replacement
   for the style pool.
 - Variance reduction: duplicate format plus all-in EV adjustment (replace all-in runouts with equity).

@@ -6,6 +6,7 @@ Specs:
   style:<name>       the calibrated center of a style in the bots file, e.g. style:tag
   calling-station    always checks or calls
   random             RandomPolicy with default rates
+  exploiter-hu:<champion|seed|path>   the heads-up exploiter (heads-up tables only)
   abc | hand-strength | blueprint:<path>   the Phase 4 baselines (``eval/duplicate.py``)
 """
 
@@ -47,6 +48,10 @@ def make_policy(
             raise ValueError(f"unknown style {arg!r}; choose from {sorted(styles)}")
         s = styles[slug(arg)]
         return StyleBot({**s["params"], "buyin": stack_bb}, seed, s["name"])
+    if kind == "exploiter-hu":
+        from pokerbot.eval.exploiter_player import HUExploiter, program_files
+
+        return HUExploiter(*program_files(arg), seed)
     if spec == "calling-station":
         return CallingStation()
     if spec == "random":

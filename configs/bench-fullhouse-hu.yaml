@@ -1,0 +1,31 @@
+# Heads-up benchmark: the evolved heads-up exploiter vs the MCCFR blueprint it was built on, both
+# facing each fullhouse-engine reference bot (e-x.club Showdown), one opponent per session.
+#   uv run pokerbot eval duplicate --config configs/bench-fullhouse-hu.yaml
+# Delta = exploiter - blueprint with the same cards and the same opponent (MATH.md §7.1), the
+# Phase 6 question asked of opponents the project never saw. Not pre-registered: an external
+# check run after Phase 7, reported as such. The sessions use a seed of their own, not the
+# test-split indices of Phase 5-7 (AGENTS.md rule 2).
+
+hero: exploiter-hu:champion     # the frozen Phase 6/7 champion (configs/final-v1.yaml)
+reference: blueprint:profiles/blueprint-hu-v1.npz
+opponents:
+  - fullhouse:template
+  - fullhouse:aggressor
+  - fullhouse:mathematician
+  - fullhouse:shark
+  - fullhouse:ref_bot_2
+seats: 2
+rotate_hero: false              # the exploiter sits at seat 0; the button alternates every hand
+seed: 20261030
+workers: 8
+bots: profiles/bots-v3.json
+
+formats:
+  cash:                         # 100 bb every hand, 50/100 blinds, all-in runouts as expectation
+    mode: cash
+    sessions: 400               # 80 per opponent (the pool is cycled heads-up)
+    hands: 300
+    stack: 10000
+    small_blind: 50
+    big_blind: 100
+    allin: true

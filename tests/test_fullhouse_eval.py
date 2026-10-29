@@ -12,7 +12,14 @@ from pokerbot.engine.cards import card_str
 from pokerbot.engine.state import HandState
 from pokerbot.engine.table import play_hand
 from pokerbot.eval.players import make_policy
-from pokerbot.eval.tables import TableFormat, play_table, run_duplicate, seatings, summarize
+from pokerbot.eval.tables import (
+    TableFormat,
+    play_table,
+    run_duplicate,
+    seatings,
+    summarize,
+    summarize_by_opponent,
+)
 from pokerbot.opponents.fullhouse import REFERENCE_BOTS, FullhouseBot, to_action
 
 POOL = [f"fullhouse:{b}" for b in REFERENCE_BOTS]
@@ -169,3 +176,35 @@ def test_allin_adjustment_conserves_chips_and_cuts_variance() -> None:
     assert np.allclose(adj.sum(axis=1), 0)
     assert not np.allclose(raw, adj)
     assert adj.std() < raw.std()
+
+
+def test_hu_exploiter_plays_a_fullhouse_bot_and_learns_from_events() -> None:
+    hero = make_policy("exploiter-hu:champion", seed=1)
+    opp = make_policy("fullhouse:aggressor", seed=2)
+    prior = hero.seat.beliefs.copy()
+    table = TableFormat("cash", hands=40)
+    per_hand = play_table([hero, opp], table, deck_seed=3)
+    assert (per_hand.sum(axis=1) == 0).all()
+    assert hero.errors == 0
+    assert hero.tracker.hands[1] == 40  # saw every hand through the public events
+    assert not np.allclose(hero.seat.beliefs, prior)  # beliefs moved off the prior
+    assert abs(hero.seat.beliefs.sum() - 1) < 1e-9
+
+
+def test_hu_exploiter_refuses_other_tables() -> None:
+    hero = make_policy("exploiter-hu:champion", seed=1)
+    with pytest.raises(ValueError, match="heads-up"):
+        play_hand([hero] + [make_policy("fullhouse:template", k) for k in range(2)],
+                  [10_000] * 3, button=0, deck_seed=1, small_blind=50, big_blind=100)  # fmt: skip
+
+
+def test_heads_up_duplicate_is_balanced_and_zero_against_itself() -> None:
+    plans = seatings(POOL, seats=2, sessions=10, seed=0, rotate_hero=False)
+    assert [p.opponents[0] for p in plans] == [POOL[s % 5] for s in range(10)]
+    assert all(p.hero_seat == 0 for p in plans)
+    fmt = TableFormat("cash", hands=30, allin=True)
+    ref = "blueprint:profiles/blueprint-hu-v1.npz"
+    results = run_duplicate(ref, ref, POOL, fmt, 5, seed=0, seats=2, rotate_hero=False)
+    assert summarize(results, fmt)["delta"].bb100 == 0
+    by_opp = summarize_by_opponent(results, fmt)
+    assert sorted(by_opp) == sorted(POOL)

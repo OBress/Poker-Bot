@@ -70,17 +70,23 @@ class SessionResult:
         return len(self.hero)
 
 
-def seatings(pool: Sequence[str], seats: int, sessions: int, seed: int) -> list[Seating]:
-    """Session plans. Hero seats rotate; opponents are drawn without replacement when the pool is
-    big enough, with replacement otherwise."""
+def seatings(
+    pool: Sequence[str], seats: int, sessions: int, seed: int, rotate_hero: bool = True
+) -> list[Seating]:
+    """Session plans. Hero seats rotate (or stay at seat 0); opponents are drawn without
+    replacement when the pool is big enough, with replacement otherwise. Heads-up, the pool is
+    cycled instead so every opponent gets the same number of sessions."""
     out = []
     for s, ss in enumerate(np.random.SeedSequence(seed).spawn(sessions)):
         rng = np.random.default_rng(ss)
-        idx = rng.choice(len(pool), size=seats - 1, replace=len(pool) < seats - 1)
+        if seats == 2:
+            idx = [s % len(pool)]
+        else:
+            idx = rng.choice(len(pool), size=seats - 1, replace=len(pool) < seats - 1)
         out.append(
             Seating(
                 session=s,
-                hero_seat=s % seats,
+                hero_seat=s % seats if rotate_hero else 0,
                 opponents=tuple(pool[i] for i in idx),
                 opponent_seeds=tuple(int(x) for x in rng.integers(0, 2**63 - 1, size=seats - 1)),
                 hero_seed=int(rng.integers(0, 2**63 - 1)),
@@ -165,9 +171,13 @@ def run_duplicate(
     seats: int = 6,
     workers: int = 1,
     bots_path: Path = DEFAULT_BOTS,
+    rotate_hero: bool = True,
     progress: Callable[[int, int], None] | None = None,
 ) -> list[SessionResult]:
-    jobs = [(st, hero, reference, fmt, bots_path) for st in seatings(pool, seats, sessions, seed)]
+    jobs = [
+        (st, hero, reference, fmt, bots_path)
+        for st in seatings(pool, seats, sessions, seed, rotate_hero)
+    ]
     if workers <= 1:
         results = []
         for job in jobs:
@@ -234,3 +244,13 @@ def summarize(results: Sequence[SessionResult], fmt: TableFormat, seed: int = 0)
         out["hero_bust_rate"] = float(np.mean([r.hero.sum() <= -fmt.stack for r in results]))
         out["ref_bust_rate"] = float(np.mean([r.ref.sum() <= -fmt.stack for r in results]))
     return out
+
+
+def summarize_by_opponent(
+    results: Sequence[SessionResult], fmt: TableFormat, seed: int = 0
+) -> dict[str, dict]:
+    """``summarize`` per opponent line-up (heads-up: per opponent)."""
+    groups: dict[str, list[SessionResult]] = {}
+    for r in results:
+        groups.setdefault(" + ".join(sorted(set(r.seating.opponents))), []).append(r)
+    return {k: summarize(v, fmt, seed) for k, v in sorted(groups.items())}

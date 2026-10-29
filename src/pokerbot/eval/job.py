@@ -7,7 +7,7 @@ from pathlib import Path
 
 import yaml
 
-from pokerbot.eval.tables import TableFormat, run_duplicate, summarize
+from pokerbot.eval.tables import TableFormat, run_duplicate, summarize, summarize_by_opponent
 from pokerbot.opponents import fullhouse
 from pokerbot.track import Run
 
@@ -42,10 +42,13 @@ def run_benchmark(cfg: dict, name: str) -> dict[str, dict]:
             results = run_duplicate(
                 cfg["hero"], cfg["reference"], cfg["opponents"], fmt, sessions,
                 seed=cfg["seed"], seats=cfg["seats"], workers=cfg["workers"],
-                bots_path=bots_path, progress=progress,
+                bots_path=bots_path, rotate_hero=cfg.get("rotate_hero", True),
+                progress=progress,
             )  # fmt: skip
             seconds = time.perf_counter() - t0
             s = summarize(results, fmt, seed=cfg["seed"])
+            if cfg["seats"] == 2:
+                s["by_opponent"] = summarize_by_opponent(results, fmt, seed=cfg["seed"])
             summaries[key] = s
             p = f"bench/{key}"
             run.log_metrics(
@@ -66,6 +69,18 @@ def run_benchmark(cfg: dict, name: str) -> dict[str, dict]:
                 },
                 mode=f["mode"],
             )
+            for opp, o in s.get("by_opponent", {}).items():
+                run.log_metrics(
+                    {
+                        f"{p}/{k}": v
+                        for k, v in (
+                            ("delta_bb100", o["delta"].bb100), ("delta_bb100_ci", o["delta"].ci),
+                            ("hero_bb100", o["hero"].bb100), ("ref_bb100", o["reference"].bb100),
+                            ("sessions", o["sessions"]),
+                        )
+                    },
+                    mode=f["mode"], opponent=opp,
+                )  # fmt: skip
             if fmt.mode == "match":
                 run.log_metrics(
                     {f"{p}/{k}": s[k] for k in ("hero_chip_delta_mean", "ref_chip_delta_mean",
@@ -86,11 +101,15 @@ def run_benchmark(cfg: dict, name: str) -> dict[str, dict]:
                     for r in results
                 ]},
             )  # fmt: skip
-        run.finish(
-            **{
-                k: {kk: (str(v) if hasattr(v, "ci") else v) for kk, v in s.items()}
-                for k, s in summaries.items()
-            }
-        )
+        run.finish(**_plain(summaries))
         print(f"run: {run.dir.name}")
     return summaries
+
+
+def _plain(x):
+    """Summaries with their Estimates as strings, for run.json."""
+    if hasattr(x, "ci"):
+        return str(x)
+    if isinstance(x, dict):
+        return {k: _plain(v) for k, v in x.items()}
+    return x

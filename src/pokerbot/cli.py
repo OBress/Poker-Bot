@@ -780,6 +780,9 @@ def cmd_eval_duplicate(args: argparse.Namespace) -> None:
         print(f"  hero {cfg['hero']}: {s['hero']}")
         print(f"  reference {cfg['reference']}: {s['reference']}")
         print(f"  sd of d per 100 hands: {s['sd_d_per100']:.1f}")
+        for opp, o in s.get("by_opponent", {}).items():
+            print(f"    vs {opp:22s} delta {o['delta']}   hero {o['hero'].bb100:+8.1f}"
+                  f"   reference {o['reference'].bb100:+8.1f}")  # fmt: skip
         if "hero_bust_rate" in s:
             print(
                 f"  chip delta per match: hero {s['hero_chip_delta_mean']:+,.0f}, "
