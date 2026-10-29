@@ -92,3 +92,12 @@ The styles we find describe that population.
 | ACPC hands (in the same PHH dataset) | Bot-vs-bot competition hands; not human playing styles. May be useful later for testing the baseline. |
 | Pluribus hands (PHH dataset) | 10k hands of an AI vs pros; too few and not representative of exploitable players. |
 | IRC Poker Database | 1990s play-money/IRC games; play-money behavior differs from real-money play. |
+
+## Opponent code: fullhouse-engine reference bots
+
+| | |
+|---|---|
+| What | The five reference bots (`template`, `aggressor`, `mathematician`, `shark`, `ref_bot_2`) of the engine behind the e-x.club Showdown (https://www.e-x.club/poker) |
+| Source | https://github.com/uzlez/fullhouse-engine, commit `a80b269`, `bots/` |
+| Terms | MIT (Fullhouse Hackathon, 2026); license copied to `src/pokerbot/opponents/fullhouse/bots/LICENSE` |
+| Use | Out-of-distribution opponents for duplicate benchmarks (`pokerbot eval duplicate`). Vendored verbatim and frozen; not data, no training use. |
