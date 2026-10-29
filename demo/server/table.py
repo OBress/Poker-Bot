@@ -12,7 +12,8 @@ Two modes:
 
 Besides the PokerBot seats, the table runs its own ``reader`` (the same classifier, not
 seated) over every hand, so reads of every player exist whoever sits at the table. Reads only
-use public information.
+use public information. Each read carries a ``fit`` (``fit.py``): how typical the player is of
+the style named, since the classifier always names one of its styles, however unusual the player.
 
 ``Table`` is pure game logic. ``main.py`` drives it with asyncio, asks bots for actions in a
 worker thread, waits for humans, and sends every client its own view (``view``), which only
@@ -32,9 +33,11 @@ from pokerbot.engine.actions import Action, ActionType, Street
 from pokerbot.engine.cards import card_str, shuffled_deck
 from pokerbot.engine.events import BoardDealt, HandEnd, Muck, PlayerAction, Showdown
 from pokerbot.engine.state import HandState
+from pokerbot.evolve import hu
 from pokerbot.opponents.sampler import StyleSampler
 
 from .engine_seat import EngineSeat, fr_profiles
+from .fit import style_fit
 
 ROOT = Path(__file__).resolve().parents[2]
 BOTS = ROOT / "profiles/bots-v3.json"
@@ -363,6 +366,7 @@ class Table:
 
     def _reads(self) -> dict[int, dict]:
         """The reader's current read of every non-PokerBot seat in the current composition."""
+        prof = hu.profiles() if self.reader.n == 2 else fr_profiles()
         out = {}
         for j, r in self.reader.reads().items():
             seat = self.hand.seats[j]
@@ -374,6 +378,7 @@ class Table:
                 "confidence": r.confidence,
                 "hands": r.hands,
                 "probs": probs,
+                "fit": style_fit(prof, self.reader.tracker.features(j).counts, r.style),
             }
         return out
 
