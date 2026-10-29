@@ -285,7 +285,14 @@ re-runs are cheap and deterministic), token/cost logging, and code extraction fr
 
 ### 4.11 `eval/` — measuring results
 
-- Duplicate match runner: same deck seeds, seats rotated, agent vs baseline in the same seat.
+- Duplicate match runner (`eval/tables.py`): same deck seeds, seats rotated, agent vs baseline in
+  the same seat. Two table formats: `cash` (stacks reset every hand) and `match` (e-x.club
+  Showdown rules: 400 hands, stacks carry over, no rebuys). Player specs in `eval/players.py`.
+- External opponents: `opponents/fullhouse/` runs any e-x.club-style `bot.py` (`decide(game_state)`)
+  inside our engine, plus the five reference bots frozen at a commit. Config:
+  `configs/bench-fullhouse.yaml`; run with `uv run pokerbot eval duplicate`. Their bots are
+  nothing like the 2009 human styles, so this is an out-of-distribution check, not a replacement
+  for the style pool.
 - Variance reduction: duplicate format plus all-in EV adjustment (replace all-in runouts with equity).
 - Metrics: bb/100 with 95% CI (bootstrap over hand blocks), Δ vs baseline, per-style breakdown,
   classifier accuracy curve vs hands observed.

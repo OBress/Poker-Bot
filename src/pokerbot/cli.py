@@ -762,6 +762,35 @@ def cmd_runs_plot(args: argparse.Namespace) -> None:
     print(plot_run(find_run(args.run), names=args.metric or None))
 
 
+def cmd_eval_duplicate(args: argparse.Namespace) -> None:
+    from pathlib import Path
+
+    from pokerbot.eval.job import load_config, run_benchmark
+
+    cfg = load_config(
+        Path(args.config), hero=args.hero, reference=args.reference, sessions=args.sessions,
+        workers=args.workers, seed=args.seed,
+    )  # fmt: skip
+    if args.mode:
+        cfg["formats"] = {k: v for k, v in cfg["formats"].items() if k in args.mode}
+    name = f"{Path(args.config).stem}-{cfg['hero'].split(':')[-1]}"
+    for key, s in run_benchmark(cfg, name).items():
+        print(f"\n[{key}] {s['sessions']} sessions, {s['hands']:,} hands per copy")
+        print(f"  delta (hero - reference): {s['delta']}")
+        print(f"  hero {cfg['hero']}: {s['hero']}")
+        print(f"  reference {cfg['reference']}: {s['reference']}")
+        print(f"  sd of d per 100 hands: {s['sd_d_per100']:.1f}")
+        if "hero_bust_rate" in s:
+            print(
+                f"  chip delta per match: hero {s['hero_chip_delta_mean']:+,.0f}, "
+                f"reference {s['ref_chip_delta_mean']:+,.0f}; bust rate hero "
+                f"{s['hero_bust_rate']:.1%}, reference {s['ref_bust_rate']:.1%}"
+            )
+        if s["hero_errors"] or s["ref_errors"]:
+            print(f"  bot errors (played as folds): hero {s['hero_errors']}, "
+                  f"reference {s['ref_errors']}")  # fmt: skip
+
+
 def _tables() -> None:
     import polars as pl
 
@@ -1129,6 +1158,17 @@ def main(argv: list[str] | None = None) -> None:
     fp.add_argument("--config", default="configs/final-v1.yaml")
     fp.add_argument("--out", default="docs/RESULTS.md")
     fp.set_defaults(func=cmd_final_report)
+
+    ev = sub.add_parser("eval", help="measure players").add_subparsers(required=True)
+    dup = ev.add_parser("duplicate", help="hero vs reference in the same seat, duplicate format")
+    dup.add_argument("--config", default="configs/bench-fullhouse.yaml")
+    dup.add_argument("--hero", default=None, help="player spec, see eval/players.py")
+    dup.add_argument("--reference", default=None, help="player spec")
+    dup.add_argument("--mode", action="append", default=None, help="formats to run (repeatable)")
+    dup.add_argument("--sessions", type=int, default=None, help="override every format")
+    dup.add_argument("--workers", type=int, default=None)
+    dup.add_argument("--seed", type=int, default=None)
+    dup.set_defaults(func=cmd_eval_duplicate)
 
     runs = sub.add_parser("runs", help="tracked experiment runs").add_subparsers(required=True)
     runs.add_parser("list", help="all runs").set_defaults(func=cmd_runs_list)
